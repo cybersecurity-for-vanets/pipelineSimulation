@@ -1,0 +1,7 @@
+conf/RSUExampleScenario.ned
+conf/antenna.xml
+conf/config.xml
+conf/coordinates_scenaries.json
+conf/scenario.launchd.xml
+conf/tomtom.json
+conf/vehicle_types.xml

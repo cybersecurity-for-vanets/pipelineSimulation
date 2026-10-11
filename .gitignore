@@ -1,0 +1,85 @@
+
+# --- Omnet++ ---
+.bundle
+.sass-cache
+Gemfile.lock
+_site
+*.gem
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual Environments ---
+venv/
+ENV/
+env/
+.env
+.venv
+
+# --- SUMO Simulation Output & Logs ---
+*.log
+*.sumo.cfg~
+traci.log
+tripinfos.xml
+summary.xml
+vehroute.xml
+fcd-output.xml
+queue.xml
+emission.xml
+tls_state.xml
+*.stat.xml
+*.sbx
+*.sub
+
+# --- Temporary & Backup Files ---
+*.bak
+*.tmp
+*~
+.DS_Store
+Thumbs.db
+
+# --- IDEs & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# --- Reinforcement Learning / Data / Checkpoints ---
+*.pth
+*.pt
+*.ckpt
+runs/
+tensorboard/
+csv/
+*.db
+
+
+# --- Ignore specific files ---
+logs/*
+osmFiles/*
+results/**
+trafficXmlFiles/**
+conf/*
