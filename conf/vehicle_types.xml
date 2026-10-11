@@ -1,0 +1,4 @@
+<?xml version='1.0' encoding='utf-8'?>
+<additional>
+<vType id="car_krauss" carFollowModel="Krauss" accel="2.42" decel="4.40" tau="0.55" sigma="0.56" minGap="2.58" />
+</additional>

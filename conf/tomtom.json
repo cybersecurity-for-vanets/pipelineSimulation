@@ -1,0 +1,12 @@
+{
+  "api_key": "API_KEY",
+  "date_range": {
+    "start": "2026-09-01",
+    "end": "2026-09-30"
+  },
+  "hcm_flow_rates_veh_per_hour_per_lane": {
+    "low_flow": 400,
+    "medium_flow": 1200,
+    "high_flow": 2000
+  }
+}
