@@ -10,10 +10,9 @@ TRAFFIC_DIR = os.path.join(BASE_DIR, "trafficXmlFiles")
 INI_OUTPUT_PATH = os.path.join(BASE_DIR, "conf", "omnetpp.ini")
 
 PROTOCOLS = {
-    "ASCON_128": 928,          # +16B payload overhead
-    "Chaskey": 928,            # +16B payload overhead
-    # "Proposed_V2X": 896,       # +12B payload overhead
-    "Ed25519": 1312            # +64B payload overhead
+    "ASCON_128": {"overhead_bytes": 16, "tx_delay_us": 0, "rx_delay_us": 0},
+    "Chaskey": {"overhead_bytes": 16, "tx_delay_us": 0, "rx_delay_us": 0},
+    "Ed25519": {"overhead_bytes": 64, "tx_delay_us": 0, "rx_delay_us": 0},
 }
 
 PLAYGROUND_MARGIN_M = 500
@@ -70,6 +69,7 @@ cmdenv-autoflush = true
 cmdenv-status-frequency = 10s
 sim-time-limit = 600s
 repeat = 30
+seed-set = ${repetition}
 
 network = RSUExampleScenario
 *.playgroundSizeX = 3000m
@@ -99,7 +99,7 @@ network = RSUExampleScenario
 *.rsu[0].mobility.z = 3
 *.rsu[*].applType = "TraCIDemoRSU11p"
 *.rsu[*].appl.headerLength = 256bit
-*.rsu[*].appl.dataLength = 800bit
+*.rsu[*].appl.dataLengthBits = 800bit
 *.rsu[*].appl.sendBeacons = true
 *.rsu[*].appl.dataOnSch = false
 *.rsu[*].appl.beaconInterval = 1s
@@ -109,9 +109,21 @@ network = RSUExampleScenario
 # Veículos e Mobilidade
 *.node[*].applType = "pipelineSimulation.LatencyTraCIDemo11p"
 *.node[*].appl.headerLength = 256bit
-*.node[*].appl.sendBeacons = true
+*.node[*].appl.dataLengthBits = 800bit
+*.node[*].appl.sendBeacons = false
 *.node[*].appl.dataOnSch = false
 *.node[*].appl.beaconInterval = 1s
+*.node[*].appl.camMinInterval = 0.1s
+*.node[*].appl.camMaxInterval = 1s
+*.node[*].appl.cbrWindow = 1s
+*.node[*].appl.camPositionThreshold = 4m
+*.node[*].appl.camHeadingThresholdDeg = 4
+*.node[*].appl.camSpeedThreshold = 0.5mps
+*.node[*].appl.cbrLowThreshold = 0.3
+*.node[*].appl.cbrHighThreshold = 0.6
+*.node[*].appl.cryptoOverheadBits = 0bit
+*.node[*].appl.cryptoTxDelay = 0us
+*.node[*].appl.cryptoRxDelay = 0us
 *.node[*].appl.beaconUserPriority = 7
 *.node[*].appl.dataUserPriority = 5
 
@@ -150,11 +162,12 @@ network = RSUExampleScenario
         rsu_x = (min_x + max_x) / 2
         rsu_y = (min_y + max_y) / 2
 
-        for proto_name, payload_bits in PROTOCOLS.items():
+        for proto_name, crypto_profile in PROTOCOLS.items():
             for flow in flows:
                 count += 1
                 config_name = f"Config_{top}_{proto_name}_{flow}"
                 launchd_filename = launchd_files[(top, flow)]
+                overhead_bits = crypto_profile["overhead_bytes"] * 8
                 
                 ini_content += f"""
 # ------------------------------------------------------------------------------
@@ -167,7 +180,9 @@ description = "{top} - {proto_name} - {flow}"
 *.playgroundSizeY = {playground_y}m
 *.rsu[0].mobility.x = {rsu_x:.2f}
 *.rsu[0].mobility.y = {rsu_y:.2f}
-*.node[*].appl.dataLength = {payload_bits}bit
+*.node[*].appl.cryptoOverheadBits = {overhead_bits}bit
+*.node[*].appl.cryptoTxDelay = {crypto_profile['tx_delay_us']}us
+*.node[*].appl.cryptoRxDelay = {crypto_profile['rx_delay_us']}us
 """
 
     with open(INI_OUTPUT_PATH, "w", encoding="utf-8") as f:

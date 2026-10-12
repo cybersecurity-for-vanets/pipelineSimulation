@@ -14,12 +14,17 @@ OUTPUT_PDF = os.path.join(PLOTS_DIR, "kpi_heatmaps.pdf")
 
 TOPOLOGY_ORDER = ["highway", "urbanRoad", "intersection"]
 FLOW_ORDER = ["low_flow", "medium_flow", "high_flow"]
-PROTOCOL_ORDER = ["ASCON_128", "Chaskey", "Proposed_V2X", "Ed25519"]
-BASE_PAYLOAD_BYTES = 100
+PROTOCOL_ORDER = [
+    "ASCON_128", 
+    "Chaskey", 
+    # "Proposed_V2X", 
+    "Ed25519"
+]
+BASE_CAM_BYTES = 64
 PROTOCOL_OVERHEAD_BYTES = {
     "ASCON_128": 16,
     "Chaskey": 16,
-    "Proposed_V2X": 12,
+    # "Proposed_V2X": 12,
     "Ed25519": 64,
 }
 
@@ -46,13 +51,11 @@ def build_kpi_values(summary):
         aggfunc="first",
     )
 
-    required_scalars = {"SentPackets", "TotalLostPackets", "channelBusy:timeavg"}
+    required_scalars = {"receivedBSMs", "channelBusy:timeavg"}
     missing = required_scalars - set(scalar_means.columns)
     if missing:
         raise ValueError(f"Faltan escalares para los heatmaps: {', '.join(sorted(missing))}")
 
-    sent = scalar_means["SentPackets"]
-    packet_delivery = ((sent - scalar_means["TotalLostPackets"]) / sent.where(sent > 0)) * 100
     channel_busy = scalar_means["channelBusy:timeavg"] * 100
 
     latency_total_name = "packetLatencyTotalMs"
@@ -77,6 +80,19 @@ def build_kpi_values(summary):
             latency_calculation = "Unavailable: no latency/delay scalar in summary"
             print("[AVISO] El CSV no contiene latencia. Ejecuta las simulaciones con el módulo instrumentado para registrar packetLatencyTotalMs/packetLatencySamples.")
 
+    crypto_kpis = []
+    for total_name, count_name, label in [
+        ("cryptoTxDelayTotalMs", "cryptoTxOperationCount", "Crypto TX processing (ms)"),
+        ("cryptoRxDelayTotalMs", "cryptoRxOperationCount", "Crypto RX processing (ms)"),
+    ]:
+        if {total_name, count_name} <= set(scalar_means.columns):
+            operation_count = scalar_means[count_name]
+            crypto_kpis.append((
+                label,
+                scalar_means[total_name] / operation_count.where(operation_count > 0),
+                f"{total_name} / {count_name} (ms)",
+            ))
+
     rows = []
     for topology in TOPOLOGY_ORDER:
         for flow in FLOW_ORDER:
@@ -87,7 +103,7 @@ def build_kpi_values(summary):
 
                 overhead_bytes = PROTOCOL_OVERHEAD_BYTES.get(protocol)
                 overhead_percent = (
-                    overhead_bytes / BASE_PAYLOAD_BYTES * 100
+                    overhead_bytes / BASE_CAM_BYTES * 100
                     if overhead_bytes is not None
                     else np.nan
                 )
@@ -96,9 +112,9 @@ def build_kpi_values(summary):
                         "Topology": topology,
                         "Protocol": protocol,
                         "Scenario": flow,
-                        "KPI": "Packet Delivered Rate (%)",
-                        "Value": packet_delivery.loc[key],
-                        "Calculation": "(SentPackets - TotalLostPackets) / SentPackets * 100; estimated from aggregated counters",
+                        "KPI": "Received BSMs per vehicle",
+                        "Value": scalar_means["receivedBSMs"].loc[key],
+                        "Calculation": "Mean receivedBSMs scalar across vehicles and runs; not a packet delivery ratio",
                     },
                     {
                         "Topology": topology,
@@ -120,11 +136,20 @@ def build_kpi_values(summary):
                         "Topology": topology,
                         "Protocol": protocol,
                         "Scenario": flow,
-                        "KPI": "Crypto Overhead (%)",
+                        "KPI": "CAM Crypto Overhead (%)",
                         "Value": overhead_percent,
-                        "Calculation": f"{overhead_bytes} extra bytes / {BASE_PAYLOAD_BYTES} baseline bytes * 100" if overhead_bytes is not None else "Unavailable: unknown protocol",
+                        "Calculation": f"Applied {overhead_bytes} extra bytes / {BASE_CAM_BYTES} baseline CAM bytes * 100; excludes processing delay" if overhead_bytes is not None else "Unavailable: unknown protocol",
                     },
                 ])
+                for label, values, calculation in crypto_kpis:
+                    rows.append({
+                        "Topology": topology,
+                        "Protocol": protocol,
+                        "Scenario": flow,
+                        "KPI": label,
+                        "Value": values.loc[key],
+                        "Calculation": calculation,
+                    })
 
     return pd.DataFrame(rows)
 
@@ -187,13 +212,15 @@ def generate_heatmaps(kpi_values):
     protocols = [protocol for protocol in PROTOCOL_ORDER if protocol in kpi_values["Protocol"].unique()]
 
     specifications = [
-        ("Packet Delivered Rate (%)", "Packet Delivered Rate (%)", "YlGn", None),
+        ("Received BSMs per vehicle", "Received BSMs per vehicle", "YlGn", None),
         ("Channel Busy Rate (%)", "Channel Busy Rate (%)", "YlOrRd", None),
         ("Latency (ms)", "Latency (ms)", "magma", "No latency/delay scalar is recorded in the existing summary CSV."),
-        ("Crypto Overhead (%)", "Crypto Overhead (%)", "Blues", None),
+        ("CAM Crypto Overhead (%)", "CAM Crypto Overhead (%)", "Blues", None),
+        ("Crypto TX processing (ms)", "Crypto TX processing (ms)", "Purples", "No crypto TX timing scalars are recorded in this summary."),
+        ("Crypto RX processing (ms)", "Crypto RX processing (ms)", "Greens", "No crypto RX timing scalars are recorded in this summary."),
     ]
 
-    figure, axes = plt.subplots(2, 2, figsize=(16, 11), constrained_layout=True)
+    figure, axes = plt.subplots(2, 3, figsize=(20, 11), constrained_layout=True)
     for ax, (kpi_name, title, cmap, unavailable_note) in zip(axes.flat, specifications):
         values = kpi_values[kpi_values["KPI"] == kpi_name].pivot_table(
             index="Row",

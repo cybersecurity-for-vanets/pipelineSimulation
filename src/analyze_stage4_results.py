@@ -243,7 +243,7 @@ def generate_plots(df_scalars):
         fig.suptitle(f"Métrica: {metric_name}", y=0.99)
         fig.tight_layout(rect=(0, 0, 1, 0.84))
         fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.png"))
-        fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.pdf"))
+        # fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.pdf"))
         plt.close(fig)
         print(f"[OK] Gráfico salvo: {safe_filename}.png/.pdf")
 
