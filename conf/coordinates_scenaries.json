@@ -1,26 +1,26 @@
 {
   "highway": {
-    "name": "Fluxo Livre (Rodovia Ayrton Senna)",
+    "name": "Fluxo Livre (Via Expressa Marginal Pinheiros)",
     "osm_file": "osmFiles/highway.osm",
-    "bbox": [-23.4900, -46.5100, -23.4800, -46.4900],
+    "bbox": [-23.4900000, -46.5100000, -23.4800000, -46.4900000],
     "edges_centro": ["E_highway_centro_1", "E_highway_centro_2"],
     "edges_bairro": ["E_highway_bairro_1", "E_highway_bairro_2"],
     "lanes_per_direction": 3,
     "speed_limit_kmh": 110
   },
   "urbanRoad": {
-    "name": "Urbano Arterial (Av. Rebouças)",
+    "name": "Urbano Arterial (Rua da Consolação)",
     "osm_file": "osmFiles/urbanRoad.osm",
-    "bbox": [-23.5600, -46.6800, -23.5500, -46.6700],
+    "bbox": [-23.5600000, -46.6800000, -23.5500000, -46.6700000],
     "edges_centro": ["E_reboucas_centro"],
     "edges_bairro": ["E_reboucas_bairro"],
     "lanes_per_direction": 2,
     "speed_limit_kmh": 60
   },
   "intersection": {
-    "name": "Cruzamento Semaforizado (Av. Paulista x Av. Brig. Luís Antônio)",
+    "name": "Cruzamento Semaforizado (Av. Francisco Morato x Av. Jorge João Saad)",
     "osm_file": "osmFiles/intersection.osm",
-    "bbox": [-23.5650, -46.6530, -23.5610, -46.6490],
+    "bbox": [-23.5650000, -46.6530000, -23.5610000, -46.6490000],
     "edges_centro": ["E_paulista_ns", "E_brigadeiro_ns"],
     "edges_bairro": ["E_paulista_sn", "E_brigadeiro_sn"],
     "lanes_per_direction": 2,

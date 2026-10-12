@@ -83,3 +83,9 @@ osmFiles/*
 results/**
 trafficXmlFiles/**
 conf/*
+!conf/pipelineSimulation/
+conf/pipelineSimulation/*
+!conf/pipelineSimulation/LatencyTraCIDemo11p.ned
+src/latency/Makefile
+src/latency/out/
+*.dylib

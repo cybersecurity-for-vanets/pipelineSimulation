@@ -30,8 +30,8 @@ def main():
     print("==================================================")
 
     # Etapa 1: Coleta de Dados TomTom e Geração de Redes SUMO
-    # run_step("Etapa 1.1 - Coleta de Mapas OSM e Dados TomTom", "fetch_data.py")
-    # run_step("Etapa 1.2 - Geração de Rotas XML", "generate_routes.py")
+    run_step("Etapa 1.1 - Coleta de Mapas OSM e Dados TomTom", "fetch_data.py")
+    run_step("Etapa 1.2 - Geração de Rotas XML", "generate_routes.py")
 
     # Etapa 2: Regerar omnetpp.ini e Estruturas de Configuração
     run_step("Etapa 2 - Configurações OMNeT++", "generate_stage2_configs.py")
@@ -40,7 +40,7 @@ def main():
     run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3.py")
 
     # # Etapa 4: Extração com opp_scavetool e Geração de Gráficos
-    # run_step("Etapa 4 - Análise Estatística e Plotagem", "analyze_stage4_results.py")
+    run_step("Etapa 4 - Análise Estatística e Plotagem", "analyze_stage4_results.py")
 
     print("\n==================================================")
     print(" PIPELINE FINALIZADO COM SUCESSO!")

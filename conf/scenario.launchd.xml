@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-    <basedir path="/Users/fabiotorres/projects/uspResearch/simulation/trafficXmlFiles/.launchd" />
-    <copy file="scenario_high_flow.sumocfg" type="config" />
-    <copy file="network.net.xml" />
-    <copy file="routes_high_flow.rou.xml" />
+    <basedir path="/Users/fabiotorres/projects/uspResearch/pipelineSimulation/trafficXmlFiles" />
+    <copy file="intersection_high_flow.sumocfg" type="config" />
 </launch>

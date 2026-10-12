@@ -4,7 +4,6 @@ import subprocess
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
@@ -97,6 +96,13 @@ def process_metrics():
     # Leitura com low_memory=False para evitar avisos de tipos mistos
     df = pd.read_csv(OUTPUT_CSV, low_memory=False)
 
+    run_config_names = pd.Series(dtype="object")
+    if {"run", "type", "attrname", "attrvalue"}.issubset(df.columns):
+        run_config_rows = df[
+            (df["type"] == "runattr") & (df["attrname"] == "configname")
+        ][["run", "attrvalue"]].drop_duplicates("run", keep="last")
+        run_config_names = run_config_rows.set_index("run")["attrvalue"]
+
     # Filtrar apenas escalares
     if 'type' in df.columns:
         df_scalars = df[df['type'] == 'scalar'].copy()
@@ -115,17 +121,21 @@ def process_metrics():
     elif 'attr:configname' in df_scalars.columns:
         config_series = df_scalars['attr:configname']
     elif 'run' in df_scalars.columns:
-        config_series = df_scalars['run'].astype(str).apply(lambda x: x.split('-')[0])
+        config_series = df_scalars['run'].map(run_config_names)
+        config_series = config_series.fillna(
+            df_scalars['run'].astype(str).str.split('-').str[0]
+        )
     else:
         print(f"[ERRO] Nenhuma coluna de configuração encontrada. Colunas: {list(df_scalars.columns)}")
         return None, None
 
     parsed = config_series.apply(parse_config)
-    df_scalars['Protocol'] = [p[0] for p in parsed]
-    df_scalars['Scenario'] = [p[1] for p in parsed]
+    df_scalars['Topology'] = [p[0] for p in parsed]
+    df_scalars['Protocol'] = [p[1] for p in parsed]
+    df_scalars['Scenario'] = [p[2] for p in parsed]
 
-    # Agrupar métricas por protocolo, cenário e nome do escalar
-    grouped = df_scalars.groupby(['Protocol', 'Scenario', 'name'])['value'].agg(
+    # Preserve topology so statistics from different networks are not mixed.
+    grouped = df_scalars.groupby(['Topology', 'Protocol', 'Scenario', 'name'])['value'].agg(
         Mean='mean',
         Std='std',
         Count='count'
@@ -153,36 +163,88 @@ def generate_plots(df_scalars):
         print("[AVISO] Nenhuma métrica escalar encontrada para plotagem.")
         return
 
-    # Plota um gráfico separado para cada métrica disponível
+    # Keep each topology separate so its results remain comparable.
     for metric_name in available_metrics:
         metric_data = df_scalars[df_scalars['name'] == metric_name]
         
         if metric_data.empty:
             continue
 
-        # Sanitizar nome da métrica para nome do arquivo
+        topologies = sorted(metric_data['Topology'].unique())
         safe_filename = "".join([c if c.isalnum() else "_" for c in metric_name]).strip("_")
-
-        fig, ax = plt.subplots(figsize=(7, 4.5))
-        sns.barplot(
-            data=metric_data,
-            x="Scenario",
-            y="value",
-            hue="Protocol",
-            order=[s for s in scenarios_order if s in metric_data['Scenario'].unique()],
-            capsize=0.1,
-            ax=ax,
-            palette="Set2"
+        protocols = sorted(metric_data['Protocol'].unique())
+        grouped = metric_data.groupby(['Topology', 'Scenario', 'Protocol'])['value'].agg(
+            Mean='mean',
+            Std='std',
+            Count='count'
         )
-        ax.set_title(f"Métrica: {metric_name}")
-        ax.set_xlabel("Cenário de Densidade de Tráfego")
-        ax.set_ylabel("Valor Médio")
-        ax.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.tight_layout()
-        
-        plt.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.png"))
-        plt.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.pdf"))
-        plt.close()
+        fig, axes = plt.subplots(
+            1,
+            len(topologies),
+            figsize=(6 * len(topologies), 4.5),
+            sharey=True,
+            squeeze=False
+        )
+        legend_handles = []
+        legend_labels = []
+        colors = plt.get_cmap("Set2")
+
+        for index, (topology, ax) in enumerate(zip(topologies, axes[0])):
+            topology_data = metric_data[metric_data['Topology'] == topology]
+            flows = [flow for flow in scenarios_order if flow in topology_data['Scenario'].unique()]
+            if not flows:
+                continue
+
+            positions = np.arange(len(flows))
+            bar_width = 0.8 / max(len(protocols), 1)
+            for protocol_index, protocol in enumerate(protocols):
+                means = []
+                confidence_intervals = []
+                for flow in flows:
+                    key = (topology, flow, protocol)
+                    if key in grouped.index:
+                        stats = grouped.loc[key]
+                        means.append(stats['Mean'])
+                        std = stats['Std'] if pd.notna(stats['Std']) else 0
+                        confidence_intervals.append(1.96 * std / np.sqrt(stats['Count']))
+                    else:
+                        means.append(np.nan)
+                        confidence_intervals.append(0)
+
+                offset = (protocol_index - (len(protocols) - 1) / 2) * bar_width
+                bars = ax.bar(
+                    positions + offset,
+                    means,
+                    width=bar_width,
+                    yerr=confidence_intervals,
+                    capsize=2,
+                    label=protocol,
+                    color=colors(protocol_index % colors.N)
+                )
+                if index == 0:
+                    legend_handles.append(bars[0])
+                    legend_labels.append(protocol)
+
+            ax.set_xticks(positions, flows)
+            ax.set_title(topology)
+            ax.set_xlabel("Cenário de Densidade de Tráfego")
+            ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+        axes[0][0].set_ylabel("Valor Médio")
+        if legend_handles:
+            fig.legend(
+                legend_handles,
+                legend_labels,
+                title="Protocol",
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.94),
+                ncol=len(legend_labels)
+            )
+        fig.suptitle(f"Métrica: {metric_name}", y=0.99)
+        fig.tight_layout(rect=(0, 0, 1, 0.84))
+        fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.png"))
+        fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.pdf"))
+        plt.close(fig)
         print(f"[OK] Gráfico salvo: {safe_filename}.png/.pdf")
 
     print(f"[OK] Processamento de gráficos concluído em: '{PLOTS_DIR}'")
