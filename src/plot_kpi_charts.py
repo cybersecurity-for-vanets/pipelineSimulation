@@ -61,6 +61,10 @@ def load_run_kpis():
     scalars = exported[exported["type"] == "scalar"].copy()
     scalars["value"] = pd.to_numeric(scalars["value"], errors="coerce")
     scalars = scalars.dropna(subset=["value"])
+    pdr_scalars = {"pdrExpectedReceptions", "pdrReceivedReceptions"}
+    pdr_counts = scalars[scalars["name"].isin(pdr_scalars)].groupby("run")["name"].nunique()
+    if pdr_counts.reindex(scalars["run"].unique(), fill_value=0).lt(2).any():
+        print("[AVISO] Há execuções sem escalares PDR. O resumo usará apenas execuções instrumentadas; reexecute as simulações ausentes.")
     scalars["Config"] = scalars["run"].map(config_names)
     parsed = scalars["Config"].apply(parse_config)
     scalars = scalars[parsed.notna()].copy()
@@ -83,6 +87,15 @@ def load_run_kpis():
         latency_total = sum_values.get("packetLatencyTotalMs", np.nan)
         if pd.notna(latency_total) and samples > 0:
             rows.append({**base, "KPI": "Latency (ms)", "Value": latency_total / samples})
+
+        expected_receptions = sum_values.get("pdrExpectedReceptions", np.nan)
+        received_receptions = sum_values.get("pdrReceivedReceptions", np.nan)
+        if pd.notna(expected_receptions) and pd.notna(received_receptions) and expected_receptions > 0:
+            rows.append({
+                **base,
+                "KPI": "PDR (%)",
+                "Value": received_receptions / expected_receptions * 100,
+            })
 
         channel_busy = mean_values.get("channelBusy:timeavg", np.nan)
         if pd.notna(channel_busy):
@@ -249,7 +262,6 @@ def main():
     print(f"[OK] Métricas por repetição: {RUN_VALUES_CSV}")
     print(f"[OK] Resumo com IC 95%: {SUMMARY_CSV}")
     print(f"[OK] Gráficos PNG/PDF: {PLOTS_DIR}")
-    print("[INFO] PDR não foi calculado: os escalares disponíveis não identificam pares válidos de pacotes enviados e recebidos.")
 
 
 if __name__ == "__main__":

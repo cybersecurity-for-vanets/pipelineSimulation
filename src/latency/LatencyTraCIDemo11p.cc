@@ -5,6 +5,10 @@
 
 using namespace omnetpp;
 
+namespace {
+constexpr int VEHICLE_CAM_PSID = 42;
+}
+
 Define_Module(pipelineSimulation::LatencyTraCIDemo11p);
 
 pipelineSimulation::LatencyTraCIDemo11p::~LatencyTraCIDemo11p()
@@ -31,6 +35,12 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
         cryptoOverheadBits = par("cryptoOverheadBits").intValue();
         cryptoTxDelay = SimTime(par("cryptoTxDelay").doubleValue());
         cryptoRxDelay = SimTime(par("cryptoRxDelay").doubleValue());
+
+        auto* connectionManager = getSimulation()->getSystemModule()->getSubmodule("connectionManager");
+        if (!connectionManager) {
+            throw cRuntimeError("Cannot find connectionManager to calculate CAM reception opportunities");
+        }
+        camCommunicationRange = connectionManager->par("maxInterfDist").doubleValue();
 
         if (camMinInterval <= SIMTIME_ZERO || camMaxInterval < camMinInterval || cbrWindow <= SIMTIME_ZERO) {
             throw cRuntimeError("Invalid adaptive CAM time interval configuration");
@@ -157,6 +167,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendAdaptiveCam()
 
     pendingCam = new veins::DemoSafetyMessage();
     populateWSM(pendingCam);
+    pendingCam->setPsid(VEHICLE_CAM_PSID);
     pendingCam->addBitLength(cryptoOverheadBits);
     pendingCamPosition = curPosition;
     pendingCamHeadingRad = mobility->getHeading().getRad();
@@ -170,6 +181,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendPendingCam()
 
     auto* cam = pendingCam;
     pendingCam = nullptr;
+    pdrExpectedReceptions += countPotentialCamReceivers();
     sendDown(cam);
 
     cryptoTxDelayTotalMs += cryptoTxDelay.dbl() * 1000.0;
@@ -215,6 +227,8 @@ void pipelineSimulation::LatencyTraCIDemo11p::updateChannelBusyRatio()
 
 void pipelineSimulation::LatencyTraCIDemo11p::onBSM(veins::DemoSafetyMessage* bsm)
 {
+    if (isVehicleCam(bsm)) ++pdrReceivedReceptions;
+
     if (cryptoRxDelay == SIMTIME_ZERO) {
         processReceivedCam(bsm);
         return;
@@ -241,6 +255,8 @@ void pipelineSimulation::LatencyTraCIDemo11p::finish()
     recordScalar("cryptoTxOperationCount", cryptoTxOperationCount);
     recordScalar("cryptoRxDelayTotalMs", cryptoRxDelayTotalMs);
     recordScalar("cryptoRxOperationCount", cryptoRxOperationCount);
+    recordScalar("pdrExpectedReceptions", pdrExpectedReceptions);
+    recordScalar("pdrReceivedReceptions", pdrReceivedReceptions);
     if (latencySampleCount > 0) {
         recordScalar("packetLatencyTotalMs", latencyTotalMs);
         recordScalar("packetLatencySamples", latencySampleCount);
@@ -254,4 +270,28 @@ void pipelineSimulation::LatencyTraCIDemo11p::recordLatency(const cMessage* mess
         latencyTotalMs += latencyMs;
         ++latencySampleCount;
     }
+}
+
+long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers() const
+{
+    auto* systemModule = getSimulation()->getSystemModule();
+    long receiverCount = 0;
+    const int nodeCount = systemModule->getSubmoduleVectorSize("node");
+
+    for (int index = 0; index < nodeCount; ++index) {
+        auto* node = systemModule->getSubmodule("node", index);
+        auto* application = node
+            ? dynamic_cast<LatencyTraCIDemo11p*>(node->getSubmodule("appl"))
+            : nullptr;
+        if (application && application != this && application->mobility &&
+            curPosition.distance(application->curPosition) <= camCommunicationRange) {
+            ++receiverCount;
+        }
+    }
+    return receiverCount;
+}
+
+bool pipelineSimulation::LatencyTraCIDemo11p::isVehicleCam(const veins::DemoSafetyMessage* bsm) const
+{
+    return bsm->getPsid() == VEHICLE_CAM_PSID;
 }

@@ -1,9 +1,11 @@
 {
-  "api_key": "API_KEY",
   "date_range": {
-    "start": "2026-09-01",
-    "end": "2026-09-30"
+    "24h_data": "2026-07-08",
+    "start": "2026-07-01",
+    "end": "2026-07-30"
   },
+  "calibration_flow": "medium_flow",
+  "time_zone": "America/Sao_Paulo",
   "hcm_flow_rates_veh_per_hour_per_lane": {
     "low_flow": 400,
     "medium_flow": 1200,

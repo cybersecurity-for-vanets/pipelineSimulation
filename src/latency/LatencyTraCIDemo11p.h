@@ -22,6 +22,8 @@ protected:
     long cryptoTxOperationCount = 0;
     double cryptoRxDelayTotalMs = 0;
     long cryptoRxOperationCount = 0;
+    long pdrExpectedReceptions = 0;
+    long pdrReceivedReceptions = 0;
 
     omnetpp::cMessage* adaptiveCamEvent = nullptr;
     omnetpp::cMessage* channelBusyRatioEvent = nullptr;
@@ -41,6 +43,7 @@ protected:
     double camSpeedThreshold;
     double cbrLowThreshold;
     double cbrHighThreshold;
+    double camCommunicationRange = 0;
     double lastCamHeadingRad = 0;
     double lastCamSpeed = 0;
     double pendingCamHeadingRad = 0;
@@ -66,6 +69,8 @@ protected:
     void sendPendingCam();
     void processReceivedCam(veins::DemoSafetyMessage* bsm);
     void updateChannelBusyRatio();
+    long countPotentialCamReceivers() const;
+    bool isVehicleCam(const veins::DemoSafetyMessage* bsm) const;
     void recordLatency(const omnetpp::cMessage* message);
 };
 

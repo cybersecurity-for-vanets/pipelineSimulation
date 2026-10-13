@@ -89,3 +89,4 @@ conf/pipelineSimulation/*
 src/latency/Makefile
 src/latency/out/
 *.dylib
+plots_09-26/*

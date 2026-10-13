@@ -1,170 +1,123 @@
-import os
 import json
+import re
 import xml.etree.ElementTree as ET
-from collections import deque
+from pathlib import Path
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CALIBRATION_PATH = os.path.join(BASE_DIR, "conf", "tomtom_calibrated_rates.json")
-OSM_DIR = os.path.join(BASE_DIR, "osmFiles")
-TRAFFIC_DIR = os.path.join(BASE_DIR, "trafficXmlFiles")
 
-os.makedirs(TRAFFIC_DIR, exist_ok=True)
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONF_DIR = BASE_DIR / "conf"
+OSM_DIR = BASE_DIR / "osmFiles"
+TRAFFIC_DIR = BASE_DIR / "trafficXmlFiles"
+CALIBRATION_DATA_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
+KRAUSS_CALIBRATION_PATH = CONF_DIR / "krauss_calibration.json"
+TOPOLOGY_FILE_NAMES = {"urban_road": "urbanRoad"}
+DEFAULT_KRAUSS = {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5}
+ROUTE_END_SECONDS = 3600
 
-def is_passenger_allowed(edge_elem):
-    for lane in edge_elem.findall('lane'):
-        allow = lane.get('allow', '')
-        disallow = lane.get('disallow', '')
 
-        if disallow:
-            dis_list = disallow.split()
-            if 'passenger' in dis_list or 'all' in dis_list:
-                continue
+def safe_id(value):
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
 
-        if allow:
-            allow_list = allow.split()
-            if 'passenger' not in allow_list and 'all' not in allow_list:
-                continue
 
-        return True
-    return False
+def load_json(path, required=True):
+    if not path.is_file():
+        if required:
+            raise FileNotFoundError(f"Required file not found: {path}")
+        return {}
+    with path.open("r", encoding="utf-8") as source:
+        return json.load(source)
 
-def get_valid_edges(net_file_path):
-    if not os.path.exists(net_file_path):
-        return []
-    tree = ET.parse(net_file_path)
-    root = tree.getroot()
-    valid_edges = []
 
-    for edge in root.findall('edge'):
-        edge_id = edge.get('id')
-        if not edge_id or edge_id.startswith(':') or edge.get('function', '') == 'internal':
-            continue
+def build_route_file(topology, routes, flow_rate, krauss):
+    root = ET.Element("routes")
 
-        if is_passenger_allowed(edge):
-            valid_edges.append(edge_id)
+    for route_name, route_data in sorted(routes.items()):
+        edges = route_data.get("sumo_edges", [])
+        if len(edges) < 2:
+            raise ValueError(f"Route '{route_name}' has no connected SUMO edge path")
 
-    return valid_edges
+        suffix = safe_id(route_name)
+        route_id = f"route_{suffix}"
+        flow_id = f"flow_{suffix}"
+        vehicle_type_id = f"car_{suffix}"
+        ET.SubElement(root, "vType", {
+            "id": vehicle_type_id,
+            "vClass": "passenger",
+            "carFollowModel": "Krauss",
+            "length": "5.0",
+            "minGap": str(krauss["minGap"]),
+            "maxSpeed": f"{route_data['speed_limit_kmh'] / 3.6:.2f}",
+            "accel": str(krauss["accel"]),
+            "decel": str(krauss["decel"]),
+            "tau": str(krauss["tau"]),
+            "sigma": str(krauss["sigma"]),
+            "speedFactor": "1",
+            "speedDev": "0.1",
+        })
+        ET.SubElement(root, "route", {"id": route_id, "edges": " ".join(edges)})
+        ET.SubElement(root, "flow", {
+            "id": flow_id,
+            "type": vehicle_type_id,
+            "route": route_id,
+            "begin": "0",
+            "end": str(ROUTE_END_SECONDS),
+            "vehsPerHour": str(flow_rate * route_data["lanes_per_direction"]),
+            "departLane": "allowed",
+            "departSpeed": "max",
+        })
 
-def find_connected_pairs(net_file_path, valid_edges):
-    tree = ET.parse(net_file_path)
-    root = tree.getroot()
-    passenger_set = set(valid_edges)
+    return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
-    adj = {edge_id: set() for edge_id in passenger_set}
 
-    for conn in root.findall('connection'):
-        f = conn.get('from')
-        t = conn.get('to')
-        if f in passenger_set and t in passenger_set and f != t:
-            adj[f].add(t)
+def build_sumocfg(topology, route_path, net_path):
+    root = ET.Element("configuration")
+    inputs = ET.SubElement(root, "input")
+    ET.SubElement(inputs, "net-file", {"value": str(net_path.resolve())})
+    ET.SubElement(inputs, "route-files", {"value": str(route_path.resolve())})
+    time = ET.SubElement(root, "time")
+    ET.SubElement(time, "begin", {"value": "0"})
+    ET.SubElement(time, "end", {"value": str(ROUTE_END_SECONDS)})
+    return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
-    def bfs_farthest(start_node):
-        visited = {start_node: 0}
-        queue = deque([start_node])
-        farthest = start_node
-        max_dist = 0
-
-        while queue:
-            curr = queue.popleft()
-            dist = visited[curr]
-            if dist > max_dist:
-                max_dist = dist
-                farthest = curr
-
-            for nxt in adj.get(curr, []):
-                if nxt not in visited:
-                    visited[nxt] = dist + 1
-                    queue.append(nxt)
-
-        return farthest, max_dist
-
-    best_pair_1 = None
-    max_d1 = -1
-    for start in valid_edges:
-        farthest, d = bfs_farthest(start)
-        if d > max_d1:
-            max_d1 = d
-            best_pair_1 = (start, farthest)
-
-    best_pair_2 = None
-    max_d2 = -1
-    for start in valid_edges:
-        if best_pair_1 and start == best_pair_1[0]:
-            continue
-        farthest, d = bfs_farthest(start)
-        if d > max_d2:
-            max_d2 = d
-            best_pair_2 = (start, farthest)
-
-    if not best_pair_2:
-        best_pair_2 = best_pair_1
-
-    return best_pair_1, best_pair_2
 
 def generate_sumo_files():
-    if not os.path.exists(CALIBRATION_PATH):
-        raise FileNotFoundError(f"Arquivo {CALIBRATION_PATH} não encontrado. Execute fetch_data.py primeiro.")
+    calibration_data = load_json(CALIBRATION_DATA_PATH)
+    calibration_profiles = load_json(KRAUSS_CALIBRATION_PATH, required=False)
+    routes = calibration_data.get("routes", {})
+    if not routes:
+        raise ValueError("Traffic Stats data contains no routes; run fetch_data.py first")
 
-    with open(CALIBRATION_PATH, "r", encoding="utf-8") as f:
-        calibrated_data = json.load(f)
+    hcm_rates = calibration_data.get("hcm_flow_rates_veh_per_hour_per_lane")
+    if not hcm_rates:
+        raise ValueError("Traffic Stats data is missing HCM flow rates")
 
-    print("=== [Etapa 1.2] Gerando arquivos de rotas (.rou.xml) e SUMO (.sumocfg) ===")
+    TRAFFIC_DIR.mkdir(parents=True, exist_ok=True)
+    topologies = sorted({route.get("topology") for route in routes.values()})
+    for topology in topologies:
+        topology_routes = {
+            name: route for name, route in routes.items()
+            if route.get("topology") == topology
+        }
+        if not topology_routes:
+            raise ValueError(f"Traffic Stats data has no routes for topology '{topology}'")
 
-    for top_key, flows in calibrated_data.items():
-        net_path = os.path.join(OSM_DIR, f"{top_key}.net.xml")
-        abs_net_path = os.path.abspath(net_path)
-        real_edges = get_valid_edges(net_path)
+        file_topology = TOPOLOGY_FILE_NAMES.get(topology, topology)
+        net_path = OSM_DIR / f"{file_topology}.net.xml"
+        if not net_path.is_file():
+            raise FileNotFoundError(f"SUMO network not found: {net_path}")
 
-        if not real_edges:
-            print(f"[ERRO CRÍTICO] Nenhuma aresta válida para passageiros em: {net_path}")
-            continue
+        krauss = calibration_profiles.get(topology, DEFAULT_KRAUSS)
 
-        pair_centro, pair_bairro = find_connected_pairs(net_path, real_edges)
+        for flow_name, flow_rate in hcm_rates.items():
+            prefix = f"{file_topology}_{flow_name}"
+            route_path = TRAFFIC_DIR / f"{prefix}.rou.xml"
+            sumocfg_path = TRAFFIC_DIR / f"{prefix}.sumocfg"
+            route_xml = build_route_file(topology, topology_routes, flow_rate, krauss)
+            route_path.write_text(route_xml, encoding="utf-8")
+            sumocfg_xml = build_sumocfg(topology, route_path, net_path)
+            sumocfg_path.write_text(sumocfg_xml, encoding="utf-8")
+            print(f"[OK] {prefix}: {len(topology_routes)} TomTom routes")
 
-        for flow_level, details in flows.items():
-            file_prefix = f"{top_key}_{flow_level}"
-            rou_filename = f"{file_prefix}.rou.xml"
-            sumocfg_filename = f"{file_prefix}.sumocfg"
-
-            rou_path = os.path.join(TRAFFIC_DIR, rou_filename)
-            sumocfg_path = os.path.join(TRAFFIC_DIR, sumocfg_filename)
-
-            abs_rou_path = os.path.abspath(rou_path)
-
-            from_c, to_c = pair_centro
-            from_b, to_b = pair_bairro
-
-            veh_per_hour = details["veh_per_hour_per_direction"]
-
-            rou_content = f"""<routes>
-<vType id="car" vClass="passenger" length="5.0" minGap="2.5" maxSpeed="{details['speed_limit_kmh']/3.6:.2f}" accel="2.6" decel="4.5" />
-
-<!-- Sentido Bairro -> Centro -->
-<flow id="flow_centro" type="car" begin="0" end="600" vehsPerHour="{veh_per_hour}" from="{from_c}" to="{to_c}" departLane="allowed" departSpeed="max" />
-
-<!-- Sentido Centro -> Bairro -->
-<flow id="flow_bairro" type="car" begin="0" end="600" vehsPerHour="{veh_per_hour}" from="{from_b}" to="{to_b}" departLane="allowed" departSpeed="max" />
-</routes>
-"""
-            with open(rou_path, "w", encoding="utf-8") as f:
-                f.write(rou_content)
-
-            # Usar caminhos absolutos garante que o launchd encontre os arquivos
-            sumocfg_content = f"""<configuration>
-<input>
-    <net-file value="{abs_net_path}" />
-    <route-files value="{abs_rou_path}" />
-</input>
-<time>
-    <begin value="0" />
-    <end value="600" />
-</time>
-</configuration>
-"""
-            with open(sumocfg_path, "w", encoding="utf-8") as f:
-                f.write(sumocfg_content)
-
-            print(f"[OK] Gerado com caminhos absolutos: {rou_filename} e {sumocfg_filename}")
 
 if __name__ == "__main__":
     generate_sumo_files()

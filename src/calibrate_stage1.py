@@ -1,197 +1,185 @@
-import os
 import json
-import xml.etree.ElementTree as ET
-import subprocess
+import math
+import os
 import shutil
-import pandas as pd
-import numpy as np
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
 import optuna
 
-# ==============================================================================
-# 1. CONFIGURACIÓN DE ENTORNO Y SELECCIÓN DE ESCENARIO HCM
-# ==============================================================================
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONF_DIR = os.path.join(PROJECT_DIR, "conf")
-RAW_DATA_DIR = os.path.join(PROJECT_DIR, "results", "rawData")
-SUMO_BINARY = os.environ.get("SUMO_BINARY") or shutil.which("sumo") or "/usr/local/bin/sumo"
-SUMO_CONFIG = os.path.join(CONF_DIR, "scenario.sumocfg")
-VTYPE_FILE = os.path.join(CONF_DIR, "vehicle_types.xml")
-OUTPUT_DUMP = os.path.join(RAW_DATA_DIR, "edge_data_output.xml")
-EMPIRICAL_JSON = os.path.join(CONF_DIR, "tomtom_calibrated_rates.json")
+try:
+    from .generate_routes import DEFAULT_KRAUSS, build_route_file, safe_id
+    from .sumo_route_utils import network_path
+except ImportError:
+    from generate_routes import DEFAULT_KRAUSS, build_route_file, safe_id
+    from sumo_route_utils import network_path
 
-# Escenario a calibrar en esta ejecución: 'high_flow', 'medium_flow', o 'low_flow'
-TARGET_SCENARIO = "high_flow"  
-ROUTE_FILE = os.path.join(PROJECT_DIR, "trafficXmlFiles", f"routes_{TARGET_SCENARIO}.rou.xml")
-N_TRIALS = 50  # Iteraciones de búsqueda con Optuna
 
-# ==============================================================================
-# 2. CARGA DINÁMICA DE DATOS EMPÍRICOS (DESDE ETAPA PRELIMINAR)
-# ==============================================================================
-def load_empirical_speeds(json_path, scenario_name):
-    """
-    Carga del archivo JSON generado por fetch_data.py
-    las velocidades medias empíricas (m/s) para el escenario seleccionado.
-    """
-    if not os.path.exists(json_path):
-        raise FileNotFoundError(
-            f"No se encontró el archivo '{json_path}'. Ejecuta primero fetch_data.py"
-        )
-        
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        
-    scenario_dict = data["scenarios"].get(scenario_name, {})
-    empirical_speeds = {}
-    
-    for edge_id, metrics in scenario_dict.items():
-        mean_spd = metrics.get("mean_speed")
-        if mean_spd is not None:
-            empirical_speeds[edge_id] = mean_spd
-            
-    if not empirical_speeds:
-        raise ValueError(f"No hay datos de velocidad válidos para el escenario '{scenario_name}' en {json_path}")
-        
-    print(f"[LOAD] Datos empíricos cargados para escenario [{scenario_name.upper()}]:")
-    for edge, spd in empirical_speeds.items():
-        print(f"  - Edge '{edge}': {spd} m/s ({spd*3.6:.1f} km/h)")
-        
-    return empirical_speeds
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONF_DIR = BASE_DIR / "conf"
+RAW_DATA_DIR = BASE_DIR / "results" / "rawData"
+CALIBRATION_DATA_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
+KRAUSS_OUTPUT_PATH = CONF_DIR / "krauss_calibration.json"
+N_TRIALS = 50
+SIMULATION_SECONDS = 3600
+SUMO_BINARY = os.environ.get("SUMO_BINARY") or shutil.which("sumo")
 
-# Carga inicial de datos para la sesión de calibración
-TOMTOM_EMPIRICAL_SPEEDS = load_empirical_speeds(EMPIRICAL_JSON, TARGET_SCENARIO)
 
-# ==============================================================================
-# 3. MANIPULACIÓN DE ARCHIVOS XML Y EJECUCIÓN DE SUMO
-# ==============================================================================
-def update_vtype_xml(accel, decel, tau, sigma, min_gap, output_filename=VTYPE_FILE):
-    """
-    Inyecta los parámetros microscópicos Krauss en el XML de vehículos.
-    """
-    tree = ET.parse(VTYPE_FILE)
-    root = tree.getroot()
-    
-    for vtype in root.findall('vType'):
-        if vtype.attrib.get('id') == 'car_krauss':
-            vtype.set('carFollowModel', 'Krauss')
-            vtype.set('accel', f"{accel:.2f}")
-            vtype.set('decel', f"{decel:.2f}")
-            vtype.set('tau', f"{tau:.2f}")
-            vtype.set('sigma', f"{sigma:.2f}")
-            vtype.set('minGap', f"{min_gap:.2f}")
-            
-    tree.write(output_filename, encoding='utf-8', xml_declaration=True)
+def load_calibration_data():
+    if not CALIBRATION_DATA_PATH.is_file():
+        raise FileNotFoundError(f"Traffic Stats data not found: {CALIBRATION_DATA_PATH}; run fetch_data.py first")
+    with CALIBRATION_DATA_PATH.open("r", encoding="utf-8") as source:
+        return json.load(source)
 
-def parse_sumo_output():
-    """
-    Extrae la velocidad promedio por tramo (m/s) reportada por SUMO.
-    """
-    simulated_speeds = {}
-    if not os.path.exists(OUTPUT_DUMP):
-        return simulated_speeds
 
-    tree = ET.parse(OUTPUT_DUMP)
-    root = tree.getroot()
+def read_trip_speeds(tripinfo_path, route_names):
+    distance_by_route = {name: 0.0 for name in route_names}
+    duration_by_route = {name: 0.0 for name in route_names}
+    root = ET.parse(tripinfo_path).getroot()
+    flow_to_route = {f"flow_{safe_id(name)}": name for name in route_names}
 
-    for interval in root.findall('interval'):
-        for edge in interval.findall('edge'):
-            edge_id = edge.attrib.get('id')
-            if edge_id in TOMTOM_EMPIRICAL_SPEEDS:
-                speed = float(edge.attrib.get('speed', 0.0))
-                simulated_speeds[edge_id] = speed
+    for trip in root.findall("tripinfo"):
+        flow_id = trip.get("id", "").rsplit(".", 1)[0]
+        route_name = flow_to_route.get(flow_id)
+        if route_name is None:
+            continue
+        duration = float(trip.get("duration", 0))
+        distance = float(trip.get("routeLength", 0))
+        if duration > 0 and distance > 0:
+            distance_by_route[route_name] += distance
+            duration_by_route[route_name] += duration
 
-    return simulated_speeds
+    return {
+        route_name: distance / duration_by_route[route_name]
+        for route_name, distance in distance_by_route.items()
+        if distance > 0 and duration_by_route[route_name] > 0
+    }
 
-def run_sumo_simulation():
-    """
-    Ejecuta SUMO en modo CLI Headless.
-    """
-    cmd = [
-        SUMO_BINARY,
-        "-c", SUMO_CONFIG,
-        "--route-files", ROUTE_FILE,
-        "--edgedata-output", OUTPUT_DUMP,
-        "--no-warnings", "true",
-        "--duration-log.disable", "true"
+
+def run_sumo_trial(topology, routes, target_speeds, calibration_data, krauss_params):
+    if not SUMO_BINARY:
+        raise FileNotFoundError("SUMO binary not found; set SUMO_BINARY or add sumo to PATH")
+
+    flow = calibration_data["calibration_flow"]
+    if flow not in calibration_data["hcm_flow_rates_veh_per_hour_per_lane"]:
+        raise ValueError(f"Unknown calibration_flow '{flow}' in Traffic Stats configuration")
+
+    flow_rate = calibration_data["hcm_flow_rates_veh_per_hour_per_lane"][flow]
+    route_xml = build_route_file(
+        topology,
+        routes,
+        flow_rate,
+        krauss_params,
+    )
+    net_file = network_path(topology)
+    RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix=f"krauss_{topology}_", dir=RAW_DATA_DIR) as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        route_file = tmp_path / "calibration.rou.xml"
+        tripinfo_file = tmp_path / "tripinfo.xml"
+        route_file.write_text(route_xml, encoding="utf-8")
+
+        command = [
+            SUMO_BINARY,
+            "--net-file", str(net_file),
+            "--route-files", str(route_file),
+            "--tripinfo-output", str(tripinfo_file),
+            "--end", str(SIMULATION_SECONDS),
+            "--seed", "1",
+            "--no-step-log", "true",
+            "--duration-log.disable", "true",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, cwd=BASE_DIR)
+        if result.returncode != 0:
+            raise RuntimeError(f"SUMO calibration trial failed: {result.stderr.strip()}")
+
+        simulated_speeds = read_trip_speeds(tripinfo_file, target_speeds)
+
+    common_routes = sorted(set(target_speeds) & set(simulated_speeds))
+    if not common_routes:
+        return math.inf, 0
+
+    squared_errors = [
+        (target_speeds[name] - simulated_speeds[name]) ** 2
+        for name in common_routes
     ]
-    os.makedirs(RAW_DATA_DIR, exist_ok=True)
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_DIR)
-    if result.returncode != 0:
-        raise RuntimeError(f"Error en SUMO: {result.stderr}")
+    return math.sqrt(sum(squared_errors) / len(squared_errors)), len(common_routes)
 
-# ==============================================================================
-# 4. FUNCIÓN OBJETIVO Y EVALUACIÓN DE ERROR (GEH + RMSE)
-# ==============================================================================
-def calculate_geh(empirical, simulated):
-    """
-    Cálculo de la estadística GEH.
-    """
-    if empirical + simulated == 0:
-        return 0
-    return np.sqrt((2 * (simulated - empirical)**2) / (empirical + simulated))
 
-def objective(trial):
-    # Rango de búsqueda de parámetros microscópicos Krauss
-    accel = trial.suggest_float("accel", 1.0, 3.5)
-    decel = trial.suggest_float("decel", 1.5, 4.5)
-    tau = trial.suggest_float("tau", 0.5, 2.0)
-    sigma = trial.suggest_float("sigma", 0.0, 1.0)
-    min_gap = trial.suggest_float("minGap", 1.0, 3.5)
+def calibrate_topology(topology, calibration_data):
+    topology_routes = {
+        name: route
+        for name, route in calibration_data["routes"].items()
+        if route["topology"] == topology
+    }
+    target_speeds = {
+        name: route["mean_harmonic_speed_24h_kmh"] / 3.6
+        for name, route in topology_routes.items()
+        if route.get("mean_harmonic_speed_24h_kmh", 0) > 0 and route.get("sumo_edges")
+    }
+    if not target_speeds:
+        raise ValueError(f"No valid hourly TomTom target speeds or SUMO edge paths for '{topology}'")
 
-    # 1. Modificar XML
-    update_vtype_xml(accel, decel, tau, sigma, min_gap)
+    study = optuna.create_study(
+        direction="minimize",
+        sampler=optuna.samplers.TPESampler(seed=1),
+    )
 
-    # 2. Ejecutar simulación
-    try:
-        run_sumo_simulation()
-    except Exception:
-        return float('inf')
+    def objective(trial):
+        parameters = {
+            "accel": trial.suggest_float("accel", 1.0, 3.5),
+            "decel": trial.suggest_float("decel", 1.5, 4.5),
+            "tau": trial.suggest_float("tau", 0.5, 2.0),
+            "sigma": trial.suggest_float("sigma", 0.0, 1.0),
+            "minGap": trial.suggest_float("minGap", 1.0, 3.5),
+        }
+        rmse, matched_routes = run_sumo_trial(
+            topology,
+            topology_routes,
+            target_speeds,
+            calibration_data,
+            parameters,
+        )
+        trial.set_user_attr("matched_routes", matched_routes)
+        return rmse
 
-    # 3. Leer velocidades simuladas
-    sim_speeds = parse_sumo_output()
-    if not sim_speeds:
-        return float('inf')
-
-    # 4. Comparar contra datos empíricos de TomTom
-    errors = []
-    geh_list = []
-    for edge_id, emp_speed in TOMTOM_EMPIRICAL_SPEEDS.items():
-        sim_speed = sim_speeds.get(edge_id, 0.0)
-        errors.append((emp_speed - sim_speed)**2)
-        geh_list.append(calculate_geh(emp_speed, sim_speed))
-
-    rmse = np.sqrt(np.mean(errors))
-    mean_geh = np.mean(geh_list)
-
-    trial.set_user_attr("rmse", rmse)
-    trial.set_user_attr("mean_geh", mean_geh)
-
-    return rmse
-
-# ==============================================================================
-# 5. EJECUCIÓN DE OPTIMIZACIÓN Y EXPORTACIÓN
-# ==============================================================================
-if __name__ == "__main__":
-    print(f"\n=== Calibrando Escenario: [{TARGET_SCENARIO.upper()}] ===")
-    
-    study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=N_TRIALS, n_jobs=1)
+    best = study.best_trial
+    if not math.isfinite(best.value):
+        raise RuntimeError(f"No SUMO trips completed for topology '{topology}' during calibration")
 
-    # Obtener el trial con el menor RMSE
-    best_trial = study.best_trial
-    best_rmse = best_trial.value
-    best_geh = best_trial.user_attrs.get("mean_geh", 0.0)
+    return {
+        **best.params,
+        "rmse_mps": best.value,
+        "matched_routes": best.user_attrs.get("matched_routes", 0),
+        "calibration_flow": calibration_data["calibration_flow"],
+        "trials": N_TRIALS,
+    }
 
-    print("\n================ RESULTADOS DE CALIBRACIÓN ================")
-    print(f"Escenario: {TARGET_SCENARIO}")
-    print(f"Mejor RMSE: {best_rmse:.4f} m/s")
-    print(f"GEH Promedio: {best_geh:.4f} (Objetivo: < 5.0)")
-    print("Parámetros Microscópicos Óptimos:")
-    for param, val in study.best_params.items():
-        print(f"  - {param}: {val:.4f}")
 
-    # Guardar un archivo XML específico para este escenario HCM
-    calibrated_vtype_out = os.path.join(CONF_DIR, f"vehicle_types_{TARGET_SCENARIO}.xml")
-    bp = study.best_params
-    update_vtype_xml(bp['accel'], bp['decel'], bp['tau'], bp['sigma'], bp['minGap'], calibrated_vtype_out)
-    
-    print(f"\n[OK] Archivo de calibración guardado como: '{calibrated_vtype_out}'")
+def main():
+    calibration_data = load_calibration_data()
+    output = {
+        "metadata": {
+            "date": calibration_data["date"],
+            "time_zone": calibration_data["time_zone"],
+            "calibration_flow": calibration_data["calibration_flow"],
+            "target": "mean harmonic speed over available hourly Traffic Stats sets",
+        }
+    }
+
+    topologies = sorted({route["topology"] for route in calibration_data["routes"].values()})
+    for topology in topologies:
+        print(f"[KRAUSS] Calibrating {topology} on {calibration_data['calibration_flow']}...")
+        output[topology] = calibrate_topology(topology, calibration_data)
+        KRAUSS_OUTPUT_PATH.write_text(json.dumps(output, indent=2), encoding="utf-8")
+        print(f"[OK] {topology}: RMSE={output[topology]['rmse_mps']:.3f} m/s")
+
+    print(f"[OK] Krauss profiles saved to {KRAUSS_OUTPUT_PATH}")
+
+
+if __name__ == "__main__":
+    main()

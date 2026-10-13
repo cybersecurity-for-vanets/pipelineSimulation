@@ -25,13 +25,14 @@ def run_step(step_name, script_name):
 def main():
     print("==================================================")
     print(" INICIANDO PIPELINE COMPLETO DE SIMULAÇÃO (VANET)")
-    print(" Matriz: 3 Topologias x 3 Densidades x 4 Protocolos")
-    print(" Total: 36 Configurações | 1.080 Simulações")
+    print(" Matriz: 3 Topologias x 3 Densidades x 3 Protocolos")
+    print(" Total: 27 Configurações | 810 Simulações OMNeT++")
     print("==================================================")
 
-    # Etapa 1: Coleta de Dados TomTom e Geração de Redes SUMO
-    run_step("Etapa 1.1 - Coleta de Mapas OSM e Dados TomTom", "fetch_data.py")
-    run_step("Etapa 1.2 - Geração de Rotas XML", "generate_routes.py")
+    # Etapa 1: Dados históricos, calibração de Krauss e rotas SUMO
+    run_step("Etapa 1.1 - Redes OSM e Traffic Stats TomTom", "fetch_data.py")
+    run_step("Etapa 1.2 - Microcalibração Krauss por topologia", "calibrate_stage1.py")
+    run_step("Etapa 1.3 - Geração das rotas SUMO calibradas", "generate_routes.py")
 
     # Etapa 2: Regerar omnetpp.ini e Estruturas de Configuração
     run_step("Etapa 2 - Configurações OMNeT++", "generate_stage2_configs.py")
