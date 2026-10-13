@@ -14,6 +14,7 @@ JOB_STATUS_URL = "https://api.tomtom.com/traffic/trafficstats/status/1"
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 MAX_ROUTES_PER_JOB = 20
 MAX_TIME_SETS = 24
+MIN_HOURS_WITH_DATA = 18
 
 
 def load_api_key():
@@ -112,10 +113,28 @@ def normalize_route_analysis(result, routes_config, selected_date, time_zone=Non
 
         if not hourly_speeds:
             continue
-        if len(hourly_speeds) != MAX_TIME_SETS:
+        if len(hourly_speeds) < MIN_HOURS_WITH_DATA:
             raise ValueError(
                 f"TomTom returned {len(hourly_speeds)}/{MAX_TIME_SETS} hourly speeds for route '{route_name}'"
             )
+        # Hours without probe data (speed 0, usually at night) are filled by interpolation
+        interpolated_hours = [name for name in expected_time_names if name not in hourly_speeds]
+        if interpolated_hours:
+            known = [i for i, name in enumerate(expected_time_names) if name in hourly_speeds]
+            for name in interpolated_hours:
+                i = expected_time_names.index(name)
+                prev_i = max((k for k in known if k < i), default=None)
+                next_i = min((k for k in known if k > i), default=None)
+                if prev_i is None:
+                    hourly_speeds[name] = hourly_speeds[expected_time_names[next_i]]
+                elif next_i is None:
+                    hourly_speeds[name] = hourly_speeds[expected_time_names[prev_i]]
+                else:
+                    low = hourly_speeds[expected_time_names[prev_i]]
+                    high = hourly_speeds[expected_time_names[next_i]]
+                    hourly_speeds[name] = low + (high - low) * (i - prev_i) / (next_i - prev_i)
+            print(f"Warning: route '{route_name}' had no data for {interpolated_hours}; interpolated")
+            hourly_speeds = {name: hourly_speeds[name] for name in expected_time_names}
 
         segments = []
         for segment in route_result.get("segmentResults", []):
@@ -141,18 +160,27 @@ def normalize_route_analysis(result, routes_config, selected_date, time_zone=Non
             **route_info,
             "hourly_harmonic_speed_kmh": hourly_speeds,
             "mean_harmonic_speed_24h_kmh": sum(hourly_speeds.values()) / len(hourly_speeds),
-            "hours_with_data": len(hourly_speeds),
+            "hours_with_data": len(hourly_speeds) - len(interpolated_hours),
+            "interpolated_hours": interpolated_hours,
             "segments": segments,
         }
 
-    missing = set(requested_routes) - set(normalized_routes)
+    missing = sorted(set(requested_routes) - set(normalized_routes))
+    if not normalized_routes:
+        raise ValueError(f"TomTom returned no usable hourly route summaries for: {', '.join(missing)}")
     if missing:
-        raise ValueError(f"TomTom returned no usable hourly route summaries for: {', '.join(sorted(missing))}")
+        # fullTraversal routes with no probe trace come back as all zeros; calibrate with the remaining routes
+        print(
+            f"WARNING: TomTom has no probe data for {', '.join(missing)}; skipping them. "
+            "Move their start/end coordinates onto the same road/carriageway used by the travel direction "
+            "(the matched path may be a detour that no probe travelled) and fetch again."
+        )
 
     return {
         "date": selected_date,
         "time_zone": time_zone or routes_config.get("time_zone", "America/Sao_Paulo"),
         "time_resolution": "1h",
+        "skipped_routes": missing,
         "routes": normalized_routes,
     }
 
@@ -280,3 +308,13 @@ def create_and_wait_for_route_analysis(
         time.sleep(poll_interval_seconds)
 
     raise TimeoutError(f"TomTom route analysis job {job_id} did not finish before the timeout")
+
+
+def open_download_route_analysis(file_name):
+    data = None
+    jobId = file_name.split("_")[1]
+    
+    with open(file_name, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    return jobId, data

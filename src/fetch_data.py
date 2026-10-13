@@ -4,6 +4,7 @@ import math
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import requests
@@ -12,14 +13,16 @@ try:
     from .tomtom_traffic_stats import (
         create_and_wait_for_route_analysis,
         normalize_route_analysis,
+        open_download_route_analysis,
     )
-    from .sumo_route_utils import build_topology_edge_routes
+    from .sumo_route_utils import _shape_points, build_topology_edge_routes
 except ImportError:
     from tomtom_traffic_stats import (
         create_and_wait_for_route_analysis,
         normalize_route_analysis,
+        open_download_route_analysis,
     )
-    from sumo_route_utils import build_topology_edge_routes
+    from sumo_route_utils import _shape_points, build_topology_edge_routes
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,6 +33,12 @@ ROUTES_CONF_PATH = CONF_DIR / "routes.json"
 SCENARIOS_CONF_PATH = CONF_DIR / "coordinates_scenaries.json"
 OUTPUT_CALIBRATION_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
 MAP_MARGIN_KM = 2.0
+OVERPASS_ENDPOINTS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+)
+OSM_USER_AGENT = "pipelineSimulation/1.0 (SUMO Krauss calibration)"
 TOPOLOGY_FILE_NAMES = {"urban_road": "urbanRoad"}
 
 
@@ -44,7 +53,7 @@ def calculate_route_bboxes(calibration_data, margin_km=MAP_MARGIN_KM):
         topology = route["topology"]
         points = coordinates.setdefault(topology, [])
         for segment in route.get("segments", []):
-            for longitude, latitude in segment.get("shape_lon_lat", []):
+            for longitude, latitude in _shape_points(segment.get("shape_lon_lat")):
                 points.append((latitude, longitude))
     if not coordinates or any(not points for points in coordinates.values()):
         raise ValueError("Traffic Stats result has no route geometries for deriving OSM bounds")
@@ -67,19 +76,37 @@ def calculate_route_bboxes(calibration_data, margin_km=MAP_MARGIN_KM):
 
 def download_osm_map(topology, bbox, session=None):
     session = session or requests.Session()
+    session.headers.update({"User-Agent": OSM_USER_AGENT})
     min_lat, min_lon, max_lat, max_lon = bbox
     osm_path = OSM_DIR / f"{TOPOLOGY_FILE_NAMES.get(topology, topology)}.osm"
     bbox_string = f"{min_lon},{min_lat},{max_lon},{max_lat}"
     map_url = f"https://api.openstreetmap.org/api/0.6/map?bbox={bbox_string}"
 
-    response = session.get(map_url, timeout=60)
-    if response.status_code != 200 or not response.content:
-        query = f"(way({min_lat},{min_lon},{max_lat},{max_lon});>;);out body;"
-        response = session.get(
-            "https://overpass-api.de/api/interpreter",
-            params={"data": query},
-            timeout=120,
+    try:
+        response = session.get(map_url, timeout=60)
+    except requests.RequestException:
+        response = None
+    if response is None or response.status_code != 200 or not response.content:
+        query = (
+            f'[out:xml][timeout:180];(way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});>;);out body;'
         )
+        response = None
+        for attempt in range(3):
+            for endpoint in OVERPASS_ENDPOINTS:
+                try:
+                    response = session.get(endpoint, params={"data": query}, timeout=200)
+                except requests.RequestException:
+                    response = None
+                    continue
+                if response.status_code == 200 and response.content:
+                    break
+                print(f"[OSM] {topology}: {endpoint} returned HTTP {response.status_code}; retrying")
+            else:
+                time.sleep(10 * (attempt + 1))
+                continue
+            break
+        if response is None:
+            raise RuntimeError(f"All OSM endpoints failed for topology '{topology}'")
     response.raise_for_status()
     if not response.content:
         raise RuntimeError(f"OSM returned an empty map for topology '{topology}'")
@@ -116,6 +143,7 @@ def convert_osm_to_net(topology, osm_path):
 def main():
     parser = argparse.ArgumentParser(description="Fetch one historical TomTom Traffic Stats day for the target routes")
     parser.add_argument("--dry-run", action="store_true", help="Print the request summary without network calls")
+    parser.add_argument('-f', '--file', help='Path to the input file')
     args = parser.parse_args()
 
     tomtom_config = load_json(TOMTOM_CONF_PATH)
@@ -136,10 +164,15 @@ def main():
         return
 
     print("=== Stage 1.1: TomTom Traffic Stats for target routes ===")
-    job_id, route_analysis = create_and_wait_for_route_analysis(
-        routes_config,
-        tomtom_config,
-    )
+    if args.file == None:
+        job_id, route_analysis = create_and_wait_for_route_analysis(
+            routes_config,
+            tomtom_config,
+        )
+    else:
+        print(f"Open JSON file: {args.file}")
+        job_id, route_analysis = open_download_route_analysis(f"{CONF_DIR}/{args.file}")
+
     selected_date = tomtom_config["date_range"]["24h_data"]
     calibration_data = normalize_route_analysis(
         route_analysis,

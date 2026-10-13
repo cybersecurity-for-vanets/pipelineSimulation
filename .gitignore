@@ -83,6 +83,7 @@ osmFiles/*
 results/**
 trafficXmlFiles/**
 conf/*
+!conf/routes.json
 !conf/pipelineSimulation/
 conf/pipelineSimulation/*
 !conf/pipelineSimulation/LatencyTraCIDemo11p.ned
