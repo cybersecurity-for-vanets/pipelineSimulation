@@ -84,6 +84,7 @@ results/**
 trafficXmlFiles/**
 conf/*
 !conf/routes.json
+!conf/cet*.csv
 !conf/pipelineSimulation/
 conf/pipelineSimulation/*
 !conf/pipelineSimulation/LatencyTraCIDemo11p.ned

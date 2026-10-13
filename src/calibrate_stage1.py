@@ -11,9 +11,11 @@ import optuna
 
 try:
     from .generate_routes import DEFAULT_KRAUSS, build_route_file, safe_id
+    from .reference_data import load_cet_hourly_flows, load_cet_hourly_speeds
     from .sumo_route_utils import network_path
 except ImportError:
     from generate_routes import DEFAULT_KRAUSS, build_route_file, safe_id
+    from reference_data import load_cet_hourly_flows, load_cet_hourly_speeds
     from sumo_route_utils import network_path
 
 
@@ -24,6 +26,8 @@ CALIBRATION_DATA_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
 KRAUSS_OUTPUT_PATH = CONF_DIR / "krauss_calibration.json"
 N_TRIALS = 50
 SIMULATION_SECONDS = 3600
+WARMUP_SECONDS = 600
+MAX_LANE_CAPACITY_PCE = 2400
 SUMO_BINARY = os.environ.get("SUMO_BINARY") or shutil.which("sumo")
 
 
@@ -34,7 +38,7 @@ def load_calibration_data():
         return json.load(source)
 
 
-def read_trip_speeds(tripinfo_path, route_names):
+def read_trip_speeds(tripinfo_path, route_names, min_depart=0.0):
     distance_by_route = {name: 0.0 for name in route_names}
     duration_by_route = {name: 0.0 for name in route_names}
     root = ET.parse(tripinfo_path).getroot()
@@ -44,6 +48,8 @@ def read_trip_speeds(tripinfo_path, route_names):
         flow_id = trip.get("id", "").rsplit(".", 1)[0]
         route_name = flow_to_route.get(flow_id)
         if route_name is None:
+            continue
+        if float(trip.get("depart", 0)) < min_depart:
             continue
         duration = float(trip.get("duration", 0))
         distance = float(trip.get("routeLength", 0))
@@ -58,21 +64,12 @@ def read_trip_speeds(tripinfo_path, route_names):
     }
 
 
-def run_sumo_trial(topology, routes, target_speeds, calibration_data, krauss_params):
+def run_sumo(topology, routes, flow_rate, krauss_params, route_names, route_flows=None, min_depart=0.0):
+    """One SUMO hour; returns {route_name: mean space speed in m/s} for route_names."""
     if not SUMO_BINARY:
         raise FileNotFoundError("SUMO binary not found; set SUMO_BINARY or add sumo to PATH")
 
-    flow = calibration_data["calibration_flow"]
-    if flow not in calibration_data["hcm_flow_rates_veh_per_hour_per_lane"]:
-        raise ValueError(f"Unknown calibration_flow '{flow}' in Traffic Stats configuration")
-
-    flow_rate = calibration_data["hcm_flow_rates_veh_per_hour_per_lane"][flow]
-    route_xml = build_route_file(
-        topology,
-        routes,
-        flow_rate,
-        krauss_params,
-    )
+    route_xml = build_route_file(topology, routes, flow_rate, krauss_params, route_flows)
     net_file = network_path(topology)
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -96,31 +93,122 @@ def run_sumo_trial(topology, routes, target_speeds, calibration_data, krauss_par
         if result.returncode != 0:
             raise RuntimeError(f"SUMO calibration trial failed: {result.stderr.strip()}")
 
-        simulated_speeds = read_trip_speeds(tripinfo_file, target_speeds)
+        return read_trip_speeds(tripinfo_file, route_names, min_depart)
 
+
+def calibration_flow_rate(calibration_data):
+    flow = calibration_data["calibration_flow"]
+    if flow not in calibration_data["hcm_flow_rates_veh_per_hour_per_lane"]:
+        raise ValueError(f"Unknown calibration_flow '{flow}' in Traffic Stats configuration")
+    return calibration_data["hcm_flow_rates_veh_per_hour_per_lane"][flow]
+
+
+def rmse(target_speeds, simulated_speeds):
     common_routes = sorted(set(target_speeds) & set(simulated_speeds))
     if not common_routes:
         return math.inf, 0
-
-    squared_errors = [
-        (target_speeds[name] - simulated_speeds[name]) ** 2
-        for name in common_routes
-    ]
+    squared_errors = [(target_speeds[name] - simulated_speeds[name]) ** 2 for name in common_routes]
     return math.sqrt(sum(squared_errors) / len(squared_errors)), len(common_routes)
+
+
+def run_sumo_trial(topology, routes, target_speeds, calibration_data, krauss_params):
+    """Fallback calibration: one run at the HCM flow rate against the 24 h mean speed."""
+    simulated_speeds = run_sumo(
+        topology, routes, calibration_flow_rate(calibration_data), krauss_params, target_speeds,
+    )
+    return rmse(target_speeds, simulated_speeds)
+
+
+def hour_key(hour):
+    return f"hour_{hour:02d}_{hour + 1:02d}"
+
+
+def build_hourly_cases(topology_routes, cet_flows):
+    """[(hour, {route: veh/h}, {route: TomTom km/h target})] using routes that have CET counts."""
+    anchored = {name: cet_flows[name] for name in topology_routes if name in cet_flows}
+    cases = []
+    for hour in sorted({hour for flows in anchored.values() for hour in flows}):
+        flows, targets = {}, {}
+        for name, route_flows in anchored.items():
+            speed = topology_routes[name].get("hourly_harmonic_speed_kmh", {}).get(hour_key(hour))
+            if hour in route_flows and speed:
+                flows[name] = route_flows[hour]
+                targets[name] = speed / 3.6
+        if targets:
+            cases.append((hour, flows, targets))
+    for hour, flows, _ in cases:
+        for name, flow in flows.items():
+            capacity = topology_routes[name].get("lanes_per_direction", 1) * MAX_LANE_CAPACITY_PCE
+            if flow > capacity:
+                print(
+                    f"WARNING: CET flow {flow:.0f} veh/h on '{name}' at {hour:02d}h exceeds the "
+                    f"~{capacity} veh/h capacity of its {topology_routes[name].get('lanes_per_direction', 1)} "
+                    "SUMO lane(s); vehicles will queue at insertion. Check the route/lane mapping."
+                )
+    return cases
+
+
+def run_hourly_cases(topology, topology_routes, cases, calibration_data, krauss_params):
+    """Simulate each case hour with the CET flows; returns [(hour, route, flow, target_mps, simulated_mps)]."""
+    fallback_rate = calibration_flow_rate(calibration_data)
+    rows = []
+    for hour, flows, targets in cases:
+        simulated = run_sumo(
+            topology, topology_routes, fallback_rate, krauss_params, targets,
+            route_flows=flows, min_depart=WARMUP_SECONDS,
+        )
+        rows.extend(
+            (hour, name, flows[name], targets[name], simulated[name])
+            for name in targets if name in simulated
+        )
+    return rows
+
+
+def hourly_rmse(rows):
+    if not rows:
+        return math.inf, 0
+    squared_errors = [(target - simulated) ** 2 for _, _, _, target, simulated in rows]
+    return math.sqrt(sum(squared_errors) / len(squared_errors)), len(rows)
+
+
+def suggest_krauss_parameters(trial):
+    return {
+        "accel": trial.suggest_float("accel", 1.0, 3.5),
+        "decel": trial.suggest_float("decel", 1.5, 4.5),
+        "tau": trial.suggest_float("tau", 0.5, 2.0),
+        "sigma": trial.suggest_float("sigma", 0.0, 1.0),
+        "minGap": trial.suggest_float("minGap", 1.0, 3.5),
+    }
+
+
+def validation_report(rows, cet_speeds):
+    """Per route/hour: CET flow, TomTom target, simulated speed and (when mapped) CET GPS speed, in km/h."""
+    return [
+        {
+            "route": route,
+            "hour": hour,
+            "cet_flow_pce_veh_h": round(flow, 1),
+            "tomtom_kmh": round(target * 3.6, 2),
+            "simulated_kmh": round(simulated * 3.6, 2),
+            "cet_gps_kmh": cet_speeds.get(route, {}).get(hour),
+        }
+        for hour, route, flow, target, simulated in rows
+    ]
 
 
 def calibrate_topology(topology, calibration_data):
     topology_routes = {
         name: route
         for name, route in calibration_data["routes"].items()
-        if route["topology"] == topology
+        if route["topology"] == topology and route.get("sumo_edges")
     }
+    cases = build_hourly_cases(topology_routes, load_cet_hourly_flows())
     target_speeds = {
         name: route["mean_harmonic_speed_24h_kmh"] / 3.6
         for name, route in topology_routes.items()
-        if route.get("mean_harmonic_speed_24h_kmh", 0) > 0 and route.get("sumo_edges")
+        if route.get("mean_harmonic_speed_24h_kmh", 0) > 0
     }
-    if not target_speeds:
+    if not cases and not target_speeds:
         raise ValueError(f"No valid hourly TomTom target speeds or SUMO edge paths for '{topology}'")
 
     study = optuna.create_study(
@@ -129,35 +217,38 @@ def calibrate_topology(topology, calibration_data):
     )
 
     def objective(trial):
-        parameters = {
-            "accel": trial.suggest_float("accel", 1.0, 3.5),
-            "decel": trial.suggest_float("decel", 1.5, 4.5),
-            "tau": trial.suggest_float("tau", 0.5, 2.0),
-            "sigma": trial.suggest_float("sigma", 0.0, 1.0),
-            "minGap": trial.suggest_float("minGap", 1.0, 3.5),
-        }
-        rmse, matched_routes = run_sumo_trial(
-            topology,
-            topology_routes,
-            target_speeds,
-            calibration_data,
-            parameters,
-        )
-        trial.set_user_attr("matched_routes", matched_routes)
-        return rmse
+        parameters = suggest_krauss_parameters(trial)
+        if cases:
+            error, matched = hourly_rmse(
+                run_hourly_cases(topology, topology_routes, cases, calibration_data, parameters)
+            )
+        else:
+            error, matched = run_sumo_trial(
+                topology, topology_routes, target_speeds, calibration_data, parameters,
+            )
+        trial.set_user_attr("matched_routes", matched)
+        return error
 
     study.optimize(objective, n_trials=N_TRIALS, n_jobs=1)
     best = study.best_trial
     if not math.isfinite(best.value):
         raise RuntimeError(f"No SUMO trips completed for topology '{topology}' during calibration")
 
-    return {
+    result = {
         **best.params,
         "rmse_mps": best.value,
         "matched_routes": best.user_attrs.get("matched_routes", 0),
-        "calibration_flow": calibration_data["calibration_flow"],
         "trials": N_TRIALS,
     }
+    if cases:
+        rows = run_hourly_cases(topology, topology_routes, cases, calibration_data, best.params)
+        result["calibration_mode"] = "hourly_cet_flows_vs_tomtom_hourly_speeds"
+        result["calibration_hours"] = [hour for hour, _, _ in cases]
+        result["validation"] = validation_report(rows, load_cet_hourly_speeds())
+    else:
+        result["calibration_mode"] = "hcm_flow_vs_tomtom_24h_mean_speed"
+        result["calibration_flow"] = calibration_data["calibration_flow"]
+    return result
 
 
 def main():
@@ -167,16 +258,17 @@ def main():
             "date": calibration_data["date"],
             "time_zone": calibration_data["time_zone"],
             "calibration_flow": calibration_data["calibration_flow"],
-            "target": "mean harmonic speed over available hourly Traffic Stats sets",
+            "target": "TomTom hourly harmonic speed at the hours with CET counts; "
+                      "topologies without CET counts use the 24 h mean at the HCM flow",
         }
     }
 
     topologies = sorted({route["topology"] for route in calibration_data["routes"].values()})
     for topology in topologies:
-        print(f"[KRAUSS] Calibrating {topology} on {calibration_data['calibration_flow']}...")
+        print(f"[KRAUSS] Calibrating {topology}...")
         output[topology] = calibrate_topology(topology, calibration_data)
         KRAUSS_OUTPUT_PATH.write_text(json.dumps(output, indent=2), encoding="utf-8")
-        print(f"[OK] {topology}: RMSE={output[topology]['rmse_mps']:.3f} m/s")
+        print(f"[OK] {topology} ({output[topology]['calibration_mode']}): RMSE={output[topology]['rmse_mps']:.3f} m/s")
 
     print(f"[OK] Krauss profiles saved to {KRAUSS_OUTPUT_PATH}")
 

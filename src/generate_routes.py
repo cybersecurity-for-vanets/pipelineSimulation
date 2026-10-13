@@ -28,7 +28,9 @@ def load_json(path, required=True):
         return json.load(source)
 
 
-def build_route_file(topology, routes, flow_rate, krauss):
+def build_route_file(topology, routes, flow_rate, krauss, route_flows=None):
+    """flow_rate is veh/h/lane; route_flows optionally overrides it per route with total veh/h."""
+    route_flows = route_flows or {}
     root = ET.Element("routes")
 
     for route_name, route_data in sorted(routes.items()):
@@ -61,7 +63,7 @@ def build_route_file(topology, routes, flow_rate, krauss):
             "route": route_id,
             "begin": "0",
             "end": str(ROUTE_END_SECONDS),
-            "vehsPerHour": str(flow_rate * route_data["lanes_per_direction"]),
+            "vehsPerHour": str(route_flows.get(route_name, flow_rate * route_data["lanes_per_direction"])),
             "departLane": "allowed",
             "departSpeed": "max",
         })
