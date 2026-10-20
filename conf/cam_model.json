@@ -1,0 +1,16 @@
+{
+  "gn_btp_header_bytes": 44,
+  "cam_base_bytes": 156,
+  "low_frequency_extra_bytes": 158,
+  "certificate_extra_bytes": 98,
+  "low_frequency_interval_s": 0.5,
+  "certificate_interval_s": 1.0,
+  "notes": {
+    "gn_btp_header_bytes": "BTP-B (4 B) + GeoNetworking SHB: Basic Header 4 B + Common Header 8 B + SHB extended header 28 B (4 B + Long Position Vector 24 B, as in Vanetza ShbHeader). Verify against ETSI EN 302 636-4-1 / EN 302 636-5-1.",
+    "cam_base_bytes": "Signed CAM without low-frequency container, signer = certificate digest: ITS PDU header + basic + high-frequency containers + IEEE 1609.2 / TS 103 097 envelope. Fitted so that headers + base = 200 B, the smallest frequent CAM size in the Volkswagen traces (Molina-Masegosa et al., IEEE TVT 2020, doi:10.1109/TVT.2020.2979232).",
+    "low_frequency_extra_bytes": "Low-frequency container incl. path history. Volkswagen modes 360-200 = 160 B and 455-300 = 155 B; mean 158 B. Interpretation of the modes is ours, the sizes are measured.",
+    "certificate_extra_bytes": "Full certificate instead of its digest. Volkswagen modes 300-200 = 100 B and 455-360 = 95 B; mean 98 B, within the 100-150 B certificate size reported in the same paper.",
+    "low_frequency_interval_s": "ETSI EN 302 637-2: low-frequency container included if at least 500 ms passed since it was last included.",
+    "certificate_interval_s": "Certificate attached once per second or when a new neighbour is detected (Molina-Masegosa et al. 2020, citing C2C-CC profiles)."
+  }
+}

@@ -85,10 +85,13 @@ trafficXmlFiles/**
 conf/*
 !conf/routes.json
 !conf/cet*.csv
+!conf/protocols.json
+!conf/cam_model.json
 !conf/pipelineSimulation/
 conf/pipelineSimulation/*
 !conf/pipelineSimulation/LatencyTraCIDemo11p.ned
 src/latency/Makefile
 src/latency/out/
+src/crypto_benchmark/out/
 *.dylib
 plots_09-26/*

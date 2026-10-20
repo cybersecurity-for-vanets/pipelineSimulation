@@ -2,11 +2,49 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <stdexcept>
+#include <string>
 
 using namespace omnetpp;
 
 namespace {
 constexpr int VEHICLE_CAM_PSID = 42;
+// Verification-only message parameters: they do not add to the frame bit length.
+constexpr const char* CAM_FIELDS_PAR = "camFields";          // sensitive fields as sent (FF1 ciphertext or clear)
+constexpr const char* CAM_PLAIN_FIELDS_PAR = "camPlainFields"; // sender's plaintext, to check decryption
+// Shared group key: every vehicle can decrypt every CAM.
+constexpr uint8_t CAM_GROUP_KEY[16] = {
+    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c};
+
+std::string formatFields(const pipelineSimulation::crypto::CamSensitiveFields& fields)
+{
+    return std::to_string(fields.stationId) + "," + std::to_string(fields.latitude) + "," +
+        std::to_string(fields.longitude) + "," + std::to_string(fields.speed) + "," + std::to_string(fields.heading);
+}
+
+pipelineSimulation::crypto::CamSensitiveFields parseFields(const char* text)
+{
+    pipelineSimulation::crypto::CamSensitiveFields fields;
+    unsigned long stationId = 0;
+    long latitude = 0, longitude = 0;
+    unsigned speed = 0, heading = 0;
+    if (std::sscanf(text, "%lu,%ld,%ld,%u,%u", &stationId, &latitude, &longitude, &speed, &heading) != 5) {
+        throw cRuntimeError("Malformed CAM field parameter '%s'", text);
+    }
+    fields.stationId = static_cast<uint32_t>(stationId);
+    fields.latitude = static_cast<int32_t>(latitude);
+    fields.longitude = static_cast<int32_t>(longitude);
+    fields.speed = static_cast<uint16_t>(speed);
+    fields.heading = static_cast<uint16_t>(heading);
+    return fields;
+}
+
+// GenerationDeltaTime (ETSI EN 302 637-2): generation time in ms modulo 65536, sent in clear; used as FF1 tweak.
+uint16_t generationDeltaTime(const cMessage* cam)
+{
+    return static_cast<uint16_t>(cam->getCreationTime().inUnit(SIMTIME_MS) % 65536);
+}
 }
 
 Define_Module(pipelineSimulation::LatencyTraCIDemo11p);
@@ -51,6 +89,34 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
         }
         if (cryptoOverheadBits < 0 || cryptoTxDelay < SIMTIME_ZERO || cryptoRxDelay < SIMTIME_ZERO) {
             throw cRuntimeError("Crypto overhead and processing delays must be non-negative");
+        }
+
+        camBaseBytes = par("camBaseBytes").intValue();
+        camLowFrequencyExtraBytes = par("camLowFrequencyExtraBytes").intValue();
+        camCertificateExtraBytes = par("camCertificateExtraBytes").intValue();
+        camLowFrequencyInterval = SimTime(par("camLowFrequencyInterval").doubleValue());
+        camCertificateInterval = SimTime(par("camCertificateInterval").doubleValue());
+        if (camBaseBytes <= 0 || camLowFrequencyExtraBytes < 0 || camCertificateExtraBytes < 0 ||
+            camLowFrequencyInterval <= SIMTIME_ZERO || camCertificateInterval <= SIMTIME_ZERO) {
+            throw cRuntimeError("Invalid CAM size model configuration");
+        }
+        // StationID: random pseudonym per vehicle (reproducible per seed).
+        stationId = static_cast<uint32_t>(intuniform(0, 0xffff)) << 16 | static_cast<uint32_t>(intuniform(0, 0xffff));
+
+        camProcessingDeadline = SimTime(par("camProcessingDeadline").doubleValue());
+        if (camProcessingDeadline <= SIMTIME_ZERO) {
+            throw cRuntimeError("camProcessingDeadline must be positive");
+        }
+
+        const std::string cipherName = par("cryptoCipher").stdstringValue();
+        if (cipherName != "none") {
+            try {
+                camBlockCipher = crypto::makeBlockCipher(cipherName, CAM_GROUP_KEY);
+            }
+            catch (const std::invalid_argument& error) {
+                throw cRuntimeError("Invalid cryptoCipher '%s': %s", cipherName.c_str(), error.what());
+            }
+            camFieldCipher = std::make_unique<crypto::CamFieldCipher>(*camBlockCipher);
         }
 
         dccMinInterval = camMinInterval;
@@ -100,6 +166,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::handleSelfMsg(cMessage* msg)
 
     if (msg->getKind() == PROCESS_CAM_AFTER_CRYPTO) {
         auto* bsm = check_and_cast<veins::DemoSafetyMessage*>(msg);
+        --cpuQueueLength;
         processReceivedCam(bsm);
         delete bsm;
         return;
@@ -110,7 +177,9 @@ void pipelineSimulation::LatencyTraCIDemo11p::handleSelfMsg(cMessage* msg)
 
 void pipelineSimulation::LatencyTraCIDemo11p::handlePositionUpdate(cObject* obj)
 {
-    veins::TraCIDemo11p::handlePositionUpdate(obj);
+    // Skip TraCIDemo11p's demo "stopped vehicle" warning: it broadcasts non-ETSI WSMs and makes
+    // receivers reroute in SUMO, which would distort the calibrated traffic.
+    veins::DemoBaseApplLayer::handlePositionUpdate(obj);
     if (hasSentCam) scheduleAdaptiveCam();
 }
 
@@ -168,20 +237,24 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendAdaptiveCam()
     pendingCam = new veins::DemoSafetyMessage();
     populateWSM(pendingCam);
     pendingCam->setPsid(VEHICLE_CAM_PSID);
-    pendingCam->addBitLength(cryptoOverheadBits);
+    applyCamSize(pendingCam);
+    attachCamFields(pendingCam);
     pendingCamPosition = curPosition;
     pendingCamHeadingRad = mobility->getHeading().getRad();
     pendingCamSpeed = mobility->getSpeed();
-    scheduleAt(simTime() + cryptoTxDelay, camCryptoEvent);
+    scheduleOnCpu(camCryptoEvent, cryptoTxDelay);
 }
 
 void pipelineSimulation::LatencyTraCIDemo11p::sendPendingCam()
 {
     if (!pendingCam) throw cRuntimeError("CAM crypto event fired without a pending CAM");
+    --cpuQueueLength;
 
     auto* cam = pendingCam;
     pendingCam = nullptr;
-    pdrExpectedReceptions += countPotentialCamReceivers();
+    pdrExpectedReceptions += countPotentialCamReceivers(pdrExpectedByDistance);
+    // Sender-side processing (queue wait + service), used to split latency at the receiver.
+    cam->addPar("txProcessingS").setDoubleValue((simTime() - cam->getCreationTime()).dbl());
     sendDown(cam);
 
     cryptoTxDelayTotalMs += cryptoTxDelay.dbl() * 1000.0;
@@ -196,17 +269,36 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendPendingCam()
 
 void pipelineSimulation::LatencyTraCIDemo11p::processReceivedCam(veins::DemoSafetyMessage* bsm)
 {
-    recordLatency(bsm);
+    // Received CAMs do not touch this vehicle's own CAM timing: ETSI generation depends only on its own state.
+    const double latencyS = recordLatency(bsm);
+    const uint32_t stationId = checkReceivedCamFields(bsm);
+
+    const double txProcessingS = bsm->hasPar("txProcessingS") ? bsm->par("txProcessingS").doubleValue() : 0.0;
+    const double rxProcessingS = bsm->hasPar("rxProcessingS") ? bsm->par("rxProcessingS").doubleValue() : 0.0;
+    const double processingS = txProcessingS + rxProcessingS;
+    processingLatencyTotalMs += processingS * 1000.0;
+    networkLatencyTotalMs += (latencyS - processingS) * 1000.0;
+    ++processingBins[std::min(static_cast<int>(processingS / PROCESSING_BIN_S), PROCESSING_BINS)];
+
+    ++pdrReceivedByDistance[distanceBin(curPosition.distance(bsm->getSenderPos()))];
+
+    // IPG: arrival-to-arrival. Peak AoI at this arrival: age of the previous received CAM from the same station.
+    const simtime_t now = simTime();
+    const simtime_t generation = bsm->getCreationTime();
+    auto previous = lastRxByStation.find(stationId);
+    if (previous != lastRxByStation.end()) {
+        ipgTotalS += (now - previous->second.first).dbl();
+        ++ipgSamples;
+        peakAoITotalS += (now - previous->second.second).dbl();
+        previous->second = std::make_pair(now, generation);
+    }
+    else {
+        lastRxByStation.emplace(stationId, std::make_pair(now, generation));
+    }
+
     cryptoRxDelayTotalMs += cryptoRxDelay.dbl() * 1000.0;
     ++cryptoRxOperationCount;
     veins::TraCIDemo11p::onBSM(bsm);
-
-    lastCamPosition = curPosition;
-    lastCamHeadingRad = mobility->getHeading().getRad();
-    lastCamSpeed = mobility->getSpeed();
-    lastCamTime = simTime();
-    hasSentCam = true;
-    scheduleAdaptiveCam();
 }
 
 void pipelineSimulation::LatencyTraCIDemo11p::updateChannelBusyRatio()
@@ -227,7 +319,12 @@ void pipelineSimulation::LatencyTraCIDemo11p::updateChannelBusyRatio()
 
 void pipelineSimulation::LatencyTraCIDemo11p::onBSM(veins::DemoSafetyMessage* bsm)
 {
-    if (isVehicleCam(bsm)) ++pdrReceivedReceptions;
+    // Only vehicle CAMs are signed/ciphered and processed; RSU beacons follow the demo application unchanged.
+    if (!isVehicleCam(bsm)) {
+        veins::TraCIDemo11p::onBSM(bsm);
+        return;
+    }
+    ++pdrReceivedReceptions;
 
     if (cryptoRxDelay == SIMTIME_ZERO) {
         processReceivedCam(bsm);
@@ -236,13 +333,13 @@ void pipelineSimulation::LatencyTraCIDemo11p::onBSM(veins::DemoSafetyMessage* bs
 
     auto* pendingBsm = check_and_cast<veins::DemoSafetyMessage*>(bsm->dup());
     pendingBsm->setKind(PROCESS_CAM_AFTER_CRYPTO);
-    scheduleAt(simTime() + cryptoRxDelay, pendingBsm);
+    const simtime_t rxProcessing = scheduleOnCpu(pendingBsm, cryptoRxDelay);
+    pendingBsm->addPar("rxProcessingS").setDoubleValue(rxProcessing.dbl());
 }
 
-void pipelineSimulation::LatencyTraCIDemo11p::onWSM(veins::BaseFrame1609_4* wsm)
+void pipelineSimulation::LatencyTraCIDemo11p::onWSM(veins::BaseFrame1609_4*)
 {
-    recordLatency(wsm);
-    veins::TraCIDemo11p::onWSM(wsm);
+    // Vehicles send only CAMs; ignore demo WSMs instead of rerouting like TraCIDemo11p does.
 }
 
 void pipelineSimulation::LatencyTraCIDemo11p::finish()
@@ -257,22 +354,47 @@ void pipelineSimulation::LatencyTraCIDemo11p::finish()
     recordScalar("cryptoRxOperationCount", cryptoRxOperationCount);
     recordScalar("pdrExpectedReceptions", pdrExpectedReceptions);
     recordScalar("pdrReceivedReceptions", pdrReceivedReceptions);
+    if (camFieldCipher) recordScalar("ff1DecryptFailures", ff1DecryptFailures);
+    recordScalar("camSentCount", camSentCount);
+    recordScalar("camBytesTotal", camBytesTotal);
+    recordScalar("camLowFrequencyCount", camLowFrequencyCount);
+    recordScalar("camCertificateCount", camCertificateCount);
+    recordScalar("cpuBusyTimeS", cpuBusyTimeS);
+    recordScalar("cpuQueueWaitTotalS", cpuQueueWaitTotalS);
+    recordScalar("cpuQueueSamples", cpuQueueSamples);
+    recordScalar("cpuMaxQueueLength", cpuMaxQueueLength);
+    recordScalar("processingDeadlineMisses", processingDeadlineMisses);
+    recordScalar("processingLatencyTotalMs", processingLatencyTotalMs);
+    recordScalar("networkLatencyTotalMs", networkLatencyTotalMs);
+    recordScalar("ipgTotalS", ipgTotalS);
+    recordScalar("ipgSamples", ipgSamples);
+    recordScalar("peakAoITotalS", peakAoITotalS);
+    for (int bin = 0; bin <= PROCESSING_BINS; ++bin) {
+        recordScalar(("procBin_" + std::to_string(bin)).c_str(), processingBins[bin]);
+    }
+    for (int bin = 0; bin < PDR_DISTANCE_BINS; ++bin) {
+        const std::string suffix = "_d" + std::to_string(bin);
+        recordScalar(("pdrExpected" + suffix).c_str(), pdrExpectedByDistance[bin]);
+        recordScalar(("pdrReceived" + suffix).c_str(), pdrReceivedByDistance[bin]);
+    }
     if (latencySampleCount > 0) {
         recordScalar("packetLatencyTotalMs", latencyTotalMs);
         recordScalar("packetLatencySamples", latencySampleCount);
     }
 }
 
-void pipelineSimulation::LatencyTraCIDemo11p::recordLatency(const cMessage* message)
+double pipelineSimulation::LatencyTraCIDemo11p::recordLatency(const cMessage* message)
 {
-    const double latencyMs = (simTime() - message->getCreationTime()).dbl() * 1000.0;
+    const double latencyS = (simTime() - message->getCreationTime()).dbl();
+    const double latencyMs = latencyS * 1000.0;
     if (std::isfinite(latencyMs) && latencyMs >= 0) {
         latencyTotalMs += latencyMs;
         ++latencySampleCount;
     }
+    return latencyS;
 }
 
-long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers() const
+long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers(long* byDistance) const
 {
     auto* systemModule = getSimulation()->getSystemModule();
     long receiverCount = 0;
@@ -283,15 +405,109 @@ long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers() const
         auto* application = node
             ? dynamic_cast<LatencyTraCIDemo11p*>(node->getSubmodule("appl"))
             : nullptr;
-        if (application && application != this && application->mobility &&
-            curPosition.distance(application->curPosition) <= camCommunicationRange) {
-            ++receiverCount;
-        }
+        if (!application || application == this || !application->mobility) continue;
+
+        const double distance = curPosition.distance(application->curPosition);
+        if (distance > camCommunicationRange) continue;
+        ++receiverCount;
+        if (byDistance) ++byDistance[distanceBin(distance)];
     }
     return receiverCount;
+}
+
+int pipelineSimulation::LatencyTraCIDemo11p::distanceBin(double meters)
+{
+    return std::min(static_cast<int>(meters / PDR_DISTANCE_BIN_M), PDR_DISTANCE_BINS - 1);
+}
+
+simtime_t pipelineSimulation::LatencyTraCIDemo11p::scheduleOnCpu(cMessage* msg, simtime_t service)
+{
+    // FIFO single core: the operation starts when the core is free and occupies it for `service`.
+    const simtime_t start = std::max(simTime(), cpuBusyUntil);
+    const simtime_t finish = start + service;
+    cpuBusyUntil = finish;
+    cpuBusyTimeS += service.dbl();
+    cpuQueueWaitTotalS += (start - simTime()).dbl();
+    ++cpuQueueSamples;
+    cpuMaxQueueLength = std::max(cpuMaxQueueLength, ++cpuQueueLength);
+    if (finish - simTime() > camProcessingDeadline) ++processingDeadlineMisses;
+    scheduleAt(finish, msg);
+    return finish - simTime();
 }
 
 bool pipelineSimulation::LatencyTraCIDemo11p::isVehicleCam(const veins::DemoSafetyMessage* bsm) const
 {
     return bsm->getPsid() == VEHICLE_CAM_PSID;
+}
+
+pipelineSimulation::crypto::CamSensitiveFields pipelineSimulation::LatencyTraCIDemo11p::currentCamFields() const
+{
+    crypto::CamSensitiveFields fields;
+    fields.stationId = stationId;
+
+    // Latitude/Longitude in 0.1 microdegree, from the SUMO network's geo-reference.
+    const auto lonLat = traci->getLonLat(curPosition);
+    fields.longitude = static_cast<int32_t>(std::lround(std::clamp(lonLat.first, -180.0, 180.0) * 1e7));
+    fields.latitude = static_cast<int32_t>(std::lround(std::clamp(lonLat.second, -90.0, 90.0) * 1e7));
+
+    // SpeedValue in 0.01 m/s (16383 = unavailable, so cap at 16382).
+    fields.speed = static_cast<uint16_t>(std::min(std::lround(std::max(mobility->getSpeed(), 0.0) * 100.0), 16382L));
+
+    // HeadingValue in 0.1 degree, 0 = north, clockwise. Veins Heading: 0 = east, counter-clockwise.
+    const double compassDeg = std::fmod(90.0 - mobility->getHeading().getRad() * 180.0 / std::acos(-1.0) + 720.0, 360.0);
+    fields.heading = static_cast<uint16_t>(std::lround(compassDeg * 10.0) % 3600);
+    return fields;
+}
+
+void pipelineSimulation::LatencyTraCIDemo11p::applyCamSize(veins::DemoSafetyMessage* cam)
+{
+    // Structural size model (conf/cam_model.json): signed CAM with digest, plus the low-frequency
+    // container every camLowFrequencyInterval and a full certificate every camCertificateInterval
+    // or after a new neighbour was heard. headerLength carries the GeoNetworking + BTP headers.
+    const bool includeLowFrequency = !hasSentLowFrequency || simTime() - lastLowFrequencyTime >= camLowFrequencyInterval;
+    const bool includeCertificate = !hasSentCertificate || newNeighbourSinceLastCam ||
+        simTime() - lastCertificateTime >= camCertificateInterval;
+
+    long bodyBytes = camBaseBytes;
+    if (includeLowFrequency) {
+        bodyBytes += camLowFrequencyExtraBytes;
+        lastLowFrequencyTime = simTime();
+        hasSentLowFrequency = true;
+        ++camLowFrequencyCount;
+    }
+    if (includeCertificate) {
+        bodyBytes += camCertificateExtraBytes;
+        lastCertificateTime = simTime();
+        hasSentCertificate = true;
+        newNeighbourSinceLastCam = false;
+        ++camCertificateCount;
+    }
+
+    cam->setBitLength(headerLength + bodyBytes * 8 + cryptoOverheadBits);
+    ++camSentCount;
+    camBytesTotal += cam->getByteLength();
+}
+
+void pipelineSimulation::LatencyTraCIDemo11p::attachCamFields(veins::DemoSafetyMessage* cam) const
+{
+    const auto plain = currentCamFields();
+    const auto sent = camFieldCipher ? camFieldCipher->encrypt(plain, generationDeltaTime(cam)) : plain;
+    cam->addPar(CAM_FIELDS_PAR).setStringValue(formatFields(sent).c_str());
+    cam->addPar(CAM_PLAIN_FIELDS_PAR).setStringValue(formatFields(plain).c_str());
+}
+
+uint32_t pipelineSimulation::LatencyTraCIDemo11p::checkReceivedCamFields(veins::DemoSafetyMessage* cam)
+{
+    if (!cam->hasPar(CAM_FIELDS_PAR) || !cam->hasPar(CAM_PLAIN_FIELDS_PAR)) {
+        if (camFieldCipher) ++ff1DecryptFailures;
+        return 0;
+    }
+    const auto plain = parseFields(cam->par(CAM_PLAIN_FIELDS_PAR).stringValue());
+    if (camFieldCipher) {
+        const auto received = parseFields(cam->par(CAM_FIELDS_PAR).stringValue());
+        if (camFieldCipher->decrypt(received, generationDeltaTime(cam)) != plain) ++ff1DecryptFailures;
+    }
+    // A CAM from an unknown station triggers a full certificate in our next CAM.
+    if (knownStations.insert(plain.stationId).second) newNeighbourSinceLastCam = true;
+    return plain.stationId;
 }

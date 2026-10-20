@@ -1,0 +1,6 @@
+{
+  "baseline": {"cipher": null, "overhead_bytes": 0},
+  "FF1_AES": {"cipher": "aes", "overhead_bytes": 0},
+  "FF1_LEA": {"cipher": "lea", "overhead_bytes": 0},
+  "FF1_SPECK": {"cipher": "speck", "overhead_bytes": 0}
+}

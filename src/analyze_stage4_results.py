@@ -5,11 +5,20 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
+try:
+    from .protocols import load_protocols
+except ImportError:
+    from protocols import load_protocols
+
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
 # ==============================================================================
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RESULTS_DIR = os.path.join(PROJECT_DIR, "results", "rawData")
+SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
+if os.path.isdir(SSD_DIR):
+    RESULTS_DIR = os.path.join(SSD_DIR, "results", "rawData")
+else:
+    RESULTS_DIR = os.path.join(PROJECT_DIR, "results", "rawData")
 OUTPUT_CSV = os.path.join(RESULTS_DIR, "scavetool_export.csv")
 SUMMARY_CSV = os.path.join(RESULTS_DIR, "final_metrics_summary.csv")
 PLOTS_DIR = os.path.join(RESULTS_DIR, "../plots")
@@ -65,7 +74,7 @@ def parse_config(config_str):
     if not isinstance(config_str, str):
         return "Unknown", "Unknown", "Unknown"
     
-    # Exemplo: Config_highway_ASCON_128_high_flow
+    # Exemplo: Config_highway_FF1_AES_high_flow
     clean = config_str.replace("Config_", "")
     
     topologies = ["highway", "urbanRoad", "intersection"]
@@ -85,77 +94,77 @@ def parse_config(config_str):
             clean = clean[:-len(f)-1]
             break
             
-    protocol_found = clean  # Restante é o protocolo (ex: ASCON_128, Proposed_V2X)
+    protocol_found = clean  # Restante é o protocolo (ex: baseline, FF1_AES)
     return top_found, protocol_found, flow_found
+
+def aggregate_export(chunk_rows=500_000):
+    """Stream the (possibly tens of GB) scavetool CSV keeping only per-(run, scalar) sum, sum of squares and count."""
+    columns = ["run", "type", "name", "attrname", "attrvalue", "value"]
+    missing = set(columns) - set(pd.read_csv(OUTPUT_CSV, nrows=0).columns)
+    if missing:
+        raise ValueError(f"Colunas ausentes no scavetool export: {', '.join(sorted(missing))}")
+
+    partial, configs = [], {}
+    reader = pd.read_csv(OUTPUT_CSV, usecols=columns, dtype=str, chunksize=chunk_rows)
+    for index, chunk in enumerate(reader, start=1):
+        runattr = chunk[(chunk["type"] == "runattr") & (chunk["attrname"] == "configname")]
+        configs.update(zip(runattr["run"], runattr["attrvalue"]))
+
+        scalars = chunk.loc[chunk["type"] == "scalar", ["run", "name", "value"]]
+        scalars = scalars.assign(value=pd.to_numeric(scalars["value"], errors="coerce")).dropna(subset=["value"])
+        if not scalars.empty:
+            scalars = scalars.assign(square=scalars["value"] ** 2)
+            partial.append(scalars.groupby(["run", "name"]).agg(
+                total=("value", "sum"), squares=("square", "sum"), count=("value", "count")))
+        if index % 20 == 0:
+            print(f"[INFO] {index * chunk_rows:,} linhas lidas...")
+
+    if not partial:
+        return None
+    return pd.concat(partial).groupby(level=["run", "name"]).sum(), pd.Series(configs, dtype="object")
+
 
 def process_metrics():
     print("[2/4] Processando e agrupando métricas por protocolo e cenário...")
     if not os.path.exists(OUTPUT_CSV):
         return None, None
 
-    # Leitura com low_memory=False para evitar avisos de tipos mistos
-    df = pd.read_csv(OUTPUT_CSV, low_memory=False)
-
-    run_config_names = pd.Series(dtype="object")
-    if {"run", "type", "attrname", "attrvalue"}.issubset(df.columns):
-        run_config_rows = df[
-            (df["type"] == "runattr") & (df["attrname"] == "configname")
-        ][["run", "attrvalue"]].drop_duplicates("run", keep="last")
-        run_config_names = run_config_rows.set_index("run")["attrvalue"]
-
-    # Filtrar apenas escalares
-    if 'type' in df.columns:
-        df_scalars = df[df['type'] == 'scalar'].copy()
-    else:
-        df_scalars = df.copy()
-
-    # Converter a coluna 'value' para numérico e descartar strings/hashes não numéricos
-    df_scalars['value'] = pd.to_numeric(df_scalars['value'], errors='coerce')
-    df_scalars = df_scalars.dropna(subset=['value'])
-
-    # Identificar a coluna que contém o nome da configuração
-    if 'config' in df_scalars.columns:
-        config_series = df_scalars['config']
-    elif 'configname' in df_scalars.columns:
-        config_series = df_scalars['configname']
-    elif 'attr:configname' in df_scalars.columns:
-        config_series = df_scalars['attr:configname']
-    elif 'run' in df_scalars.columns:
-        config_series = df_scalars['run'].map(run_config_names)
-        config_series = config_series.fillna(
-            df_scalars['run'].astype(str).str.split('-').str[0]
-        )
-    else:
-        print(f"[ERRO] Nenhuma coluna de configuração encontrada. Colunas: {list(df_scalars.columns)}")
+    aggregated = aggregate_export()
+    if aggregated is None:
+        print("[ERRO] Nenhum escalar encontrado no export.")
         return None, None
+    per_run, run_config_names = aggregated
 
+    per_run = per_run.reset_index()
+    config_series = per_run["run"].map(run_config_names)
+    config_series = config_series.fillna(per_run["run"].astype(str).str.split("-").str[0])
     parsed = config_series.apply(parse_config)
-    df_scalars['Topology'] = [p[0] for p in parsed]
-    df_scalars['Protocol'] = [p[1] for p in parsed]
-    df_scalars['Scenario'] = [p[2] for p in parsed]
+    per_run["Topology"] = [p[0] for p in parsed]
+    per_run["Protocol"] = [p[1] for p in parsed]
+    per_run["Scenario"] = [p[2] for p in parsed]
 
     # Preserve topology so statistics from different networks are not mixed.
-    grouped = df_scalars.groupby(['Topology', 'Protocol', 'Scenario', 'name'])['value'].agg(
-        Mean='mean',
-        Std='std',
-        Count='count'
-    ).reset_index()
+    totals = per_run.groupby(["Topology", "Protocol", "Scenario", "name"])[["total", "squares", "count"]].sum()
+    grouped = pd.DataFrame({"Mean": totals["total"] / totals["count"], "Count": totals["count"]})
+    variance = (totals["squares"] - totals["total"] ** 2 / totals["count"]) / (totals["count"] - 1)
+    grouped["Std"] = np.sqrt(variance.clip(lower=0).where(totals["count"] > 1))
+    grouped = grouped[["Mean", "Std", "Count"]].reset_index()
 
     # Cálculo do Intervalo de Confiança de 95%
     grouped['CI_95'] = 1.96 * (grouped['Std'] / np.sqrt(grouped['Count'].replace(0, np.nan)))
 
     grouped.to_csv(SUMMARY_CSV, index=False)
     print(f"[OK] Resumo estatístico salvo em: '{SUMMARY_CSV}'")
-    return df_scalars, grouped
+    return grouped, grouped
 
 # ==============================================================================
 # 4. GERAÇÃO DE GRÁFICOS COMPARATIVOS
 # ==============================================================================
-def generate_plots(df_scalars):
+def generate_plots(summary):
     print("[3/4] Gerando gráficos para a dissertação...")
     
     scenarios_order = ["low_flow", "medium_flow", "high_flow"]
-    available_metrics = df_scalars['name'].unique()
+    available_metrics = summary['name'].unique()
 
     print(f"[INFO] Métricas encontradas no dataset: {list(available_metrics)}")
 
@@ -165,19 +174,19 @@ def generate_plots(df_scalars):
 
     # Keep each topology separate so its results remain comparable.
     for metric_name in available_metrics:
-        metric_data = df_scalars[df_scalars['name'] == metric_name]
+        metric_data = summary[summary['name'] == metric_name]
         
         if metric_data.empty:
             continue
 
         topologies = sorted(metric_data['Topology'].unique())
         safe_filename = "".join([c if c.isalnum() else "_" for c in metric_name]).strip("_")
-        protocols = sorted(metric_data['Protocol'].unique())
-        grouped = metric_data.groupby(['Topology', 'Scenario', 'Protocol'])['value'].agg(
-            Mean='mean',
-            Std='std',
-            Count='count'
+        protocol_order = list(load_protocols())
+        protocols = sorted(
+            metric_data['Protocol'].unique(),
+            key=lambda name: (protocol_order.index(name) if name in protocol_order else len(protocol_order), name),
         )
+        grouped = metric_data.set_index(['Topology', 'Scenario', 'Protocol'])
         fig, axes = plt.subplots(
             1,
             len(topologies),
@@ -254,10 +263,10 @@ def generate_plots(df_scalars):
 # ==============================================================================
 if __name__ == "__main__":
     print("=== Iniciando Processamento e Análise da Etapa 4 ===")
-    if export_omnet_results():
-        df_raw, df_summary = process_metrics()
-        if df_raw is not None:
-            generate_plots(df_raw)
-            print("\n=== Etapa 4 Concluída com Sucesso! ===")
-            print(f"- Relatório Estatístico: {SUMMARY_CSV}")
-            print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")
+    # if export_omnet_results():
+    df_raw, df_summary = process_metrics()
+    if df_raw is not None:
+        generate_plots(df_summary)
+        print("\n=== Etapa 4 Concluída com Sucesso! ===")
+        print(f"- Relatório Estatístico: {SUMMARY_CSV}")
+        print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")

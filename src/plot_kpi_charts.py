@@ -5,22 +5,81 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 
+try:
+    from .kpi_statistics import (
+        equivalence_tests, load_margins, paired_differences, summarize_differences,
+    )
+    from .protocols import load_protocols
+except ImportError:
+    from kpi_statistics import (
+        equivalence_tests, load_margins, paired_differences, summarize_differences,
+    )
+    from protocols import load_protocols
+
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCAVETOOL_CSV = os.path.join(PROJECT_DIR, "results", "rawData", "scavetool_export.csv")
-RESULTS_DIR = os.path.join(PROJECT_DIR, "results", "rawData")
+SSD_DIR = "/Volumes/PSSD T7/simulationData"
+# Same location rule as analyze_stage4_results.py (the export lives on the SSD when it is mounted).
+RESULTS_DIR = os.path.join(SSD_DIR if os.path.isdir(SSD_DIR) else PROJECT_DIR, "results", "rawData")
+SCAVETOOL_CSV = os.path.join(RESULTS_DIR, "scavetool_export.csv")
 PLOTS_DIR = os.path.join(PROJECT_DIR, "results", "plots", "kpi_charts")
 RUN_VALUES_CSV = os.path.join(RESULTS_DIR, "kpi_run_values.csv")
 SUMMARY_CSV = os.path.join(RESULTS_DIR, "kpi_run_summary.csv")
+PAIRED_CSV = os.path.join(RESULTS_DIR, "paired_differences.csv")
+PAIRED_SUMMARY_CSV = os.path.join(RESULTS_DIR, "paired_summary.csv")
+EQUIVALENCE_CSV = os.path.join(RESULTS_DIR, "equivalence_tests.csv")
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
 FLOWS = ["low_flow", "medium_flow", "high_flow"]
-PROTOCOLS = ["ASCON_128", "Chaskey", "Ed25519"]
-BASE_CAM_BYTES = 64
-OVERHEAD_BYTES = {"ASCON_128": 16, "Chaskey": 16, "Ed25519": 64}
+PROTOCOLS = list(load_protocols())
+BASELINE_PROTOCOL = "baseline"
+
+# KPI names (also the row labels in the CSVs and the chart titles).
+LATENCY_KPI = "Latency (ms)"
+PROCESSING_KPI = "Processing latency (ms)"
+PROCESSING_P95_KPI = "Processing latency p95 (ms)"
+PROCESSING_P99_KPI = "Processing latency p99 (ms)"
+NETWORK_KPI = "Network latency (ms)"
+PDR_KPI = "PDR (%)"
+CBR_KPI = "Channel Busy Rate (%)"
+CPU_KPI = "CPU utilization (%)"
+QUEUE_WAIT_KPI = "Mean queue wait (ms)"
+MAX_QUEUE_KPI = "Max queue length"
+DEADLINE_KPI = "Deadline misses (%)"
+IPG_KPI = "Inter-packet gap (ms)"
+PAOI_KPI = "Peak AoI (ms)"
+CAM_RATE_KPI = "CAM rate (Hz)"
+BYTES_KPI = "Bytes per CAM"
+DECRYPT_KPI = "FF1 decrypt failures"
+PAIRED_KPIS = [
+    LATENCY_KPI, PROCESSING_KPI, NETWORK_KPI, PDR_KPI, CBR_KPI, CPU_KPI, QUEUE_WAIT_KPI, DEADLINE_KPI,
+    IPG_KPI, PAOI_KPI, BYTES_KPI, CAM_RATE_KPI,
+]
+
+# Must match LatencyTraCIDemo11p.h: processing histogram bins (10 us, 0-2 ms, last bin = overflow).
+PROCESSING_BIN_MS = 0.01
+PROCESSING_BINS = 200
+PDR_DISTANCE_BIN_M = 50
+PDR_DISTANCE_BINS = 6
 
 plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
 plt.rcParams.update({"font.family": "serif", "font.size": 9, "axes.titlesize": 11})
+
+
+def scalar_value(series, name, default=0.0):
+    raw = series.get(name, default)
+    return default if pd.isna(raw) else float(raw)
+
+
+def percentile_from_bins(counts, quantile):
+    """Upper edge (ms) of the bin where the cumulative count reaches the quantile; overflow reports the cap."""
+    total = counts.sum()
+    if total <= 0:
+        return np.nan
+    index = int(np.searchsorted(np.cumsum(counts), quantile * total))
+    if index >= PROCESSING_BINS:
+        return PROCESSING_BINS * PROCESSING_BIN_MS
+    return (index + 1) * PROCESSING_BIN_MS
 
 
 def parse_config(config_name):
@@ -41,41 +100,71 @@ def parse_config(config_name):
     return topology, protocol, flow
 
 
+def aggregate_export(chunk_rows=500_000):
+    """Stream the (possibly tens of GB) scavetool CSV, keeping only per-(run, scalar name) sum/count/max."""
+    columns = ["run", "type", "module", "name", "attrname", "attrvalue", "value"]
+    required = {"run", "type", "module", "name", "value", "attrname", "attrvalue"}
+    header = set(pd.read_csv(SCAVETOOL_CSV, nrows=0).columns)
+    if required - header:
+        raise ValueError(f"Colunas ausentes no scavetool export: {', '.join(sorted(required - header))}")
+
+    partial, lifetimes, configs = [], [], {}
+    reader = pd.read_csv(SCAVETOOL_CSV, usecols=columns, dtype=str, chunksize=chunk_rows)
+    for index, chunk in enumerate(reader, start=1):
+        runattr = chunk[(chunk["type"] == "runattr") & (chunk["attrname"] == "configname")]
+        configs.update(zip(runattr["run"], runattr["attrvalue"]))
+
+        scalars = chunk.loc[chunk["type"] == "scalar", ["run", "module", "name", "value"]]
+        scalars = scalars.assign(value=pd.to_numeric(scalars["value"], errors="coerce")).dropna(subset=["value"])
+        if scalars.empty:
+            continue
+        partial.append(scalars.groupby(["run", "name"])["value"].agg(["sum", "count", "max"]))
+        mobility = scalars[(scalars["name"] == "totalTime")
+                           & scalars["module"].astype(str).str.contains("veinsmobility", regex=False)]
+        if not mobility.empty:
+            lifetimes.append(mobility.groupby("run")["value"].sum())
+        if index % 20 == 0:
+            print(f"[INFO] {index * chunk_rows:,} linhas lidas...")
+
+    if not partial:
+        raise ValueError("Nenhum escalar encontrado no scavetool export.")
+    combined = pd.concat(partial).groupby(level=["run", "name"]).agg({"sum": "sum", "count": "sum", "max": "max"})
+    vehicle_time = pd.concat(lifetimes).groupby(level=0).sum() if lifetimes else pd.Series(dtype=float)
+    sums = combined["sum"]
+    means = combined["sum"] / combined["count"]
+    return sums, means, combined["max"], vehicle_time, pd.Series(configs)
+
+
 def load_run_kpis():
     if not os.path.isfile(SCAVETOOL_CSV):
         raise FileNotFoundError(
             f"Não encontrei {SCAVETOOL_CSV}. Execute analyze_stage4_results.py primeiro."
         )
 
-    exported = pd.read_csv(SCAVETOOL_CSV, low_memory=False)
-    required = {"run", "type", "module", "name", "value", "attrname", "attrvalue"}
-    missing = required - set(exported.columns)
-    if missing:
-        raise ValueError(f"Colunas ausentes no scavetool export: {', '.join(sorted(missing))}")
+    sums_by_run, means_by_run, max_by_run, vehicle_time, config_names = aggregate_export()
 
-    config_names = exported.loc[
-        (exported["type"] == "runattr") & (exported["attrname"] == "configname"),
-        ["run", "attrvalue"],
-    ].drop_duplicates("run", keep="last").set_index("run")["attrvalue"]
+    run_keys = {}
+    for run, config in config_names.items():
+        parsed = parse_config(config)
+        if parsed is not None:
+            run_keys[run] = (run, *parsed)
 
-    scalars = exported[exported["type"] == "scalar"].copy()
-    scalars["value"] = pd.to_numeric(scalars["value"], errors="coerce")
-    scalars = scalars.dropna(subset=["value"])
-    pdr_scalars = {"pdrExpectedReceptions", "pdrReceivedReceptions"}
-    pdr_counts = scalars[scalars["name"].isin(pdr_scalars)].groupby("run")["name"].nunique()
-    if pdr_counts.reindex(scalars["run"].unique(), fill_value=0).lt(2).any():
+    def keyed(series):
+        """Re-index a (run, name) series by (run, Topology, Protocol, Scenario) and spread names into columns."""
+        series = series[series.index.get_level_values("run").isin(run_keys)]
+        series.index = pd.MultiIndex.from_tuples(
+            [(*run_keys[run], name) for run, name in series.index],
+            names=["run", "Topology", "Protocol", "Scenario", "name"],
+        )
+        return series.unstack("name")
+
+    sums = keyed(sums_by_run)
+    means = keyed(means_by_run)
+    max_queue = keyed(max_by_run).get("cpuMaxQueueLength", pd.Series(dtype=float))
+    pdr_counts = sums_by_run[sums_by_run.index.get_level_values("name").isin(
+        {"pdrExpectedReceptions", "pdrReceivedReceptions"})].groupby("run").size()
+    if pdr_counts.reindex(sums_by_run.index.get_level_values("run").unique(), fill_value=0).lt(2).any():
         print("[AVISO] Há execuções sem escalares PDR. O resumo usará apenas execuções instrumentadas; reexecute as simulações ausentes.")
-    scalars["Config"] = scalars["run"].map(config_names)
-    parsed = scalars["Config"].apply(parse_config)
-    scalars = scalars[parsed.notna()].copy()
-    scalars[["Topology", "Protocol", "Scenario"]] = pd.DataFrame(
-        parsed[parsed.notna()].tolist(), index=scalars.index
-    )
-
-    keys = ["run", "Topology", "Protocol", "Scenario"]
-    grouped = scalars.groupby(keys + ["name"])["value"]
-    sums = grouped.sum().unstack("name")
-    means = grouped.mean().unstack("name")
     rows = []
 
     for key, sum_values in sums.iterrows():
@@ -118,13 +207,51 @@ def load_run_kpis():
             if pd.notna(total_delay) and operation_count > 0:
                 rows.append({**base, "KPI": label, "Value": total_delay / operation_count})
 
-        overhead = OVERHEAD_BYTES.get(protocol)
-        if overhead is not None:
-            rows.append({
-                **base,
-            "KPI": "CAM Crypto Overhead (%)",
-            "Value": overhead / BASE_CAM_BYTES * 100,
-            })
+        seconds = vehicle_time.get(run, np.nan)
+        if pd.notna(seconds) and seconds > 0:
+            busy = scalar_value(sum_values, "cpuBusyTimeS")
+            rows.append({**base, "KPI": CPU_KPI, "Value": 100 * busy / seconds})
+            if scalar_value(sum_values, "camSentCount") > 0:
+                rows.append({**base, "KPI": CAM_RATE_KPI, "Value": scalar_value(sum_values, "camSentCount") / seconds})
+
+        queue_samples = scalar_value(sum_values, "cpuQueueSamples")
+        if queue_samples > 0:
+            rows.append({**base, "KPI": QUEUE_WAIT_KPI,
+                         "Value": 1000 * scalar_value(sum_values, "cpuQueueWaitTotalS") / queue_samples})
+            rows.append({**base, "KPI": DEADLINE_KPI,
+                         "Value": 100 * scalar_value(sum_values, "processingDeadlineMisses") / queue_samples})
+            if pd.notna(max_queue.get(key, np.nan)):
+                rows.append({**base, "KPI": MAX_QUEUE_KPI, "Value": max_queue.get(key)})
+
+        if samples > 0:
+            rows.append({**base, "KPI": PROCESSING_KPI,
+                         "Value": scalar_value(sum_values, "processingLatencyTotalMs") / samples})
+            rows.append({**base, "KPI": NETWORK_KPI,
+                         "Value": scalar_value(sum_values, "networkLatencyTotalMs") / samples})
+            counts = np.array([scalar_value(sum_values, f"procBin_{index}") for index in range(PROCESSING_BINS + 1)])
+            for quantile, label in [(0.95, PROCESSING_P95_KPI), (0.99, PROCESSING_P99_KPI)]:
+                percentile = percentile_from_bins(counts, quantile)
+                if pd.notna(percentile):
+                    rows.append({**base, "KPI": label, "Value": percentile})
+
+        ipg_samples = scalar_value(sum_values, "ipgSamples")
+        if ipg_samples > 0:
+            rows.append({**base, "KPI": IPG_KPI, "Value": 1000 * scalar_value(sum_values, "ipgTotalS") / ipg_samples})
+            rows.append({**base, "KPI": PAOI_KPI, "Value": 1000 * scalar_value(sum_values, "peakAoITotalS") / ipg_samples})
+
+        cam_count = scalar_value(sum_values, "camSentCount")
+        if cam_count > 0:
+            rows.append({**base, "KPI": BYTES_KPI, "Value": scalar_value(sum_values, "camBytesTotal") / cam_count})
+
+        if pd.notna(sum_values.get("ff1DecryptFailures", np.nan)):
+            rows.append({**base, "KPI": DECRYPT_KPI, "Value": scalar_value(sum_values, "ff1DecryptFailures")})
+
+        for index in range(PDR_DISTANCE_BINS):
+            expected = scalar_value(sum_values, f"pdrExpected_d{index}")
+            received = scalar_value(sum_values, f"pdrReceived_d{index}")
+            if expected > 0:
+                low, high = index * PDR_DISTANCE_BIN_M, (index + 1) * PDR_DISTANCE_BIN_M
+                rows.append({**base, "KPI": f"PDR {low}-{high} m (%)", "Value": 100 * received / expected})
 
     run_values = pd.DataFrame(rows)
     if run_values.empty:
@@ -135,6 +262,16 @@ def load_run_kpis():
     )["Value"].agg(Mean="mean", Std="std", N="count")
     summary["CI95"] = 1.96 * summary["Std"].fillna(0) / np.sqrt(summary["N"])
     return run_values, summary
+
+
+def delta_rows(paired_summary):
+    """Paired mean difference vs baseline, shaped like the summary so the same charts can draw it."""
+    columns = ["Topology", "Protocol", "Scenario", "KPI", "Mean", "Std", "N", "CI95"]
+    if paired_summary.empty:
+        return pd.DataFrame(columns=columns)
+    rows = paired_summary.rename(columns={"MeanDiff": "Mean", "SD": "Std"})
+    rows = rows.assign(KPI=rows["KPI"] + " vs baseline")
+    return rows[columns]
 
 
 def save_figure(figure, filename):
@@ -178,7 +315,7 @@ def plot_bars(summary):
 
 
 def plot_lines(summary):
-    metrics = [value for value in summary["KPI"].unique() if value != "CAM Crypto Overhead (%)"]
+    metrics = summary["KPI"].unique()
     for metric in metrics:
         figure, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), squeeze=False)
         legend_handles = []
@@ -221,7 +358,7 @@ def plot_cbr_latency_scatter(run_values):
         index=["run", "Topology", "Protocol", "Scenario"], columns="KPI", values="Value", aggfunc="first"
     ).reset_index()
     values = values.dropna(subset=["Channel Busy Rate (%)", "Latency (ms)"])
-    figure, axes = plt.subplots(1, len(PROTOCOLS), figsize=(15, 5), sharex=True, sharey=True, squeeze=False)
+    figure, axes = plt.subplots(1, len(PROTOCOLS), figsize=(4.5 * len(PROTOCOLS), 5), sharex=True, sharey=True, squeeze=False)
     markers = {topology: marker for topology, marker in zip(TOPOLOGIES, ["o", "s", "^"])}
     for ax, protocol in zip(axes[0], PROTOCOLS):
         protocol_values = values[values["Protocol"] == protocol]
@@ -250,17 +387,56 @@ def plot_cbr_latency_scatter(run_values):
     save_figure(figure, "scatter_cbr_vs_latency")
 
 
+def report_checks(run_values):
+    failures = run_values.loc[run_values["KPI"] == DECRYPT_KPI, "Value"]
+    if failures.empty:
+        print("[INFO] FF1 decrypt failures: not applicable (no FF1 runs in this set).")
+    elif failures.sum() > 0:
+        print(f"[ERRO] FF1 decrypt failures: {failures.sum():.0f} (must be 0).")
+    else:
+        print("[OK] FF1 decrypt failures: 0 in every run.")
+
+
+def report_equivalence(equivalence):
+    if equivalence.empty:
+        print("[AVISO] Nenhum teste de equivalência foi calculado (faltam repetições pareadas).")
+        return
+    for kpi, group in equivalence.groupby("KPI"):
+        print(f"[EQUIV] {kpi}: {group['Equivalent'].sum()}/{len(group)} grupos equivalentes ao baseline "
+              f"(margem ±{group['Margin'].iloc[0]:g})")
+
+
 def main():
     run_values, summary = load_run_kpis()
+    report_checks(run_values)
+
+    present = set(run_values["KPI"])
+    paired = pd.concat(
+        [paired_differences(run_values, kpi) for kpi in PAIRED_KPIS if kpi in present],
+        ignore_index=True,
+    )
+    paired_summary = summarize_differences(paired)
+    equivalence = equivalence_tests(paired, load_margins())
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
     run_values.to_csv(RUN_VALUES_CSV, index=False)
     summary.to_csv(SUMMARY_CSV, index=False)
-    plot_bars(summary)
-    plot_lines(summary)
+    paired.to_csv(PAIRED_CSV, index=False)
+    paired_summary.to_csv(PAIRED_SUMMARY_CSV, index=False)
+    equivalence.to_csv(EQUIVALENCE_CSV, index=False)
+    report_equivalence(equivalence)
+
+    # Distance bins and per-run detail stay in the CSVs; charts show the overall KPIs and paired deltas.
+    chart_summary = pd.concat([summary, delta_rows(paired_summary)], ignore_index=True)
+    chart_summary = chart_summary[~chart_summary["KPI"].str.contains(" m (%)", regex=False)]
+    plot_bars(chart_summary)
+    plot_lines(chart_summary)
     plot_latency_boxplots(run_values)
     plot_cbr_latency_scatter(run_values)
     print(f"[OK] Métricas por repetição: {RUN_VALUES_CSV}")
     print(f"[OK] Resumo com IC 95%: {SUMMARY_CSV}")
+    print(f"[OK] Diferenças pareadas vs baseline: {PAIRED_SUMMARY_CSV}")
+    print(f"[OK] Testes de equivalência (TOST, Holm): {EQUIVALENCE_CSV}")
     print(f"[OK] Gráficos PNG/PDF: {PLOTS_DIR}")
 
 

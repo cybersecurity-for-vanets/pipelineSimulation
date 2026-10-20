@@ -1,5 +1,12 @@
 #pragma once
 
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+
+#include "BlockCipher.h"
+#include "CamFieldCipher.h"
 #include "veins/modules/mac/ieee80211p/Mac1609_4.h"
 #include "veins/modules/application/traci/TraCIDemo11p.h"
 
@@ -7,6 +14,11 @@ namespace pipelineSimulation {
 
 class LatencyTraCIDemo11p : public veins::TraCIDemo11p {
 protected:
+    static constexpr int PROCESSING_BINS = 200;        // 10 us bins from 0 to 2 ms, plus overflow
+    static constexpr double PROCESSING_BIN_S = 10e-6;
+    static constexpr int PDR_DISTANCE_BINS = 6;        // 50 m bins up to the 300 m range
+    static constexpr double PDR_DISTANCE_BIN_M = 50.0;
+
     enum AdaptiveEventKind {
         SEND_ADAPTIVE_CAM = 100,
         UPDATE_CHANNEL_BUSY_RATIO = 101,
@@ -24,6 +36,50 @@ protected:
     long cryptoRxOperationCount = 0;
     long pdrExpectedReceptions = 0;
     long pdrReceivedReceptions = 0;
+    long ff1DecryptFailures = 0;
+    long camSentCount = 0;
+    long camBytesTotal = 0;
+    long camLowFrequencyCount = 0;
+    long camCertificateCount = 0;
+
+    // Single-core OBU processing model: FIFO shared by tx and rx operations.
+    omnetpp::simtime_t cpuBusyUntil;
+    omnetpp::simtime_t camProcessingDeadline;
+    double cpuBusyTimeS = 0;
+    double cpuQueueWaitTotalS = 0;
+    long cpuQueueSamples = 0;
+    long cpuQueueLength = 0;
+    long cpuMaxQueueLength = 0;
+    long processingDeadlineMisses = 0;
+    double processingLatencyTotalMs = 0;
+    double networkLatencyTotalMs = 0;
+
+    // KPI distributions as bin counts (summable across nodes) and sums for IPG / peak AoI.
+    long processingBins[PROCESSING_BINS + 1] = {};
+    long pdrExpectedByDistance[PDR_DISTANCE_BINS] = {};
+    long pdrReceivedByDistance[PDR_DISTANCE_BINS] = {};
+    double ipgTotalS = 0;
+    long ipgSamples = 0;
+    double peakAoITotalS = 0;
+    // station id -> (arrival time, generation time) of its last received CAM.
+    std::unordered_map<uint32_t, std::pair<omnetpp::simtime_t, omnetpp::simtime_t>> lastRxByStation;
+
+    std::unique_ptr<crypto::BlockCipher> camBlockCipher;
+    std::unique_ptr<crypto::CamFieldCipher> camFieldCipher;
+
+    // CAM size model (conf/cam_model.json) and security envelope state.
+    long camBaseBytes = 0;
+    long camLowFrequencyExtraBytes = 0;
+    long camCertificateExtraBytes = 0;
+    omnetpp::simtime_t camLowFrequencyInterval;
+    omnetpp::simtime_t camCertificateInterval;
+    omnetpp::simtime_t lastLowFrequencyTime;
+    omnetpp::simtime_t lastCertificateTime;
+    bool hasSentLowFrequency = false;
+    bool hasSentCertificate = false;
+    bool newNeighbourSinceLastCam = false;
+    uint32_t stationId = 0;
+    std::unordered_set<uint32_t> knownStations;
 
     omnetpp::cMessage* adaptiveCamEvent = nullptr;
     omnetpp::cMessage* channelBusyRatioEvent = nullptr;
@@ -69,9 +125,15 @@ protected:
     void sendPendingCam();
     void processReceivedCam(veins::DemoSafetyMessage* bsm);
     void updateChannelBusyRatio();
-    long countPotentialCamReceivers() const;
+    long countPotentialCamReceivers(long* byDistance) const;
     bool isVehicleCam(const veins::DemoSafetyMessage* bsm) const;
-    void recordLatency(const omnetpp::cMessage* message);
+    double recordLatency(const omnetpp::cMessage* message);
+    crypto::CamSensitiveFields currentCamFields() const;
+    void applyCamSize(veins::DemoSafetyMessage* cam);
+    void attachCamFields(veins::DemoSafetyMessage* cam) const;
+    uint32_t checkReceivedCamFields(veins::DemoSafetyMessage* cam);
+    omnetpp::simtime_t scheduleOnCpu(omnetpp::cMessage* msg, omnetpp::simtime_t service);
+    static int distanceBin(double meters);
 };
 
 }

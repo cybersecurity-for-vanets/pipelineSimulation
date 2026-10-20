@@ -14,6 +14,15 @@ simple LatencyTraCIDemo11p extends TraCIDemo11p
         double camSpeedThreshold @unit(mps) = default(0.5mps);
         double cbrLowThreshold = default(0.3);
         double cbrHighThreshold = default(0.6);
+        string cryptoCipher = default("none"); // FF1 block cipher for the sensitive CAM fields: "none", "aes", "lea" or "speck"
+        // CAM size model (conf/cam_model.json); GeoNetworking + BTP headers go in headerLength.
+        int camBaseBytes = default(156);
+        int camLowFrequencyExtraBytes = default(158);
+        int camCertificateExtraBytes = default(98);
+        double camLowFrequencyInterval @unit(s) = default(0.5s);
+        double camCertificateInterval @unit(s) = default(1s);
+        // Deadline for one CAM crypto operation (queue wait + service); ETSI minimum CAM interval.
+        double camProcessingDeadline @unit(s) = default(0.1s);
         int cryptoOverheadBits @unit(bit) = default(0bit);
         double cryptoTxDelay @unit(s) = default(0s);
         double cryptoRxDelay @unit(s) = default(0s);

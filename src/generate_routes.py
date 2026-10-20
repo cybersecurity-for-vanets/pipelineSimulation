@@ -13,6 +13,8 @@ KRAUSS_CALIBRATION_PATH = CONF_DIR / "krauss_calibration.json"
 TOPOLOGY_FILE_NAMES = {"urban_road": "urbanRoad"}
 DEFAULT_KRAUSS = {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5}
 ROUTE_END_SECONDS = 3600
+# SUMO step and Veins TraCI update interval: ETSI CAM triggers are checked every 100 ms.
+SUMO_STEP_LENGTH = 0.1
 
 
 def safe_id(value):
@@ -79,6 +81,8 @@ def build_sumocfg(topology, route_path, net_path):
     time = ET.SubElement(root, "time")
     ET.SubElement(time, "begin", {"value": "0"})
     ET.SubElement(time, "end", {"value": str(ROUTE_END_SECONDS)})
+    processing = ET.SubElement(root, "processing")
+    ET.SubElement(processing, "step-length", {"value": str(SUMO_STEP_LENGTH)})
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 

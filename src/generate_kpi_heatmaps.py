@@ -4,9 +4,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+try:
+    from .plot_kpi_charts import (
+        CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
+        PAIRED_SUMMARY_CSV, SUMMARY_CSV,
+    )
+    from .protocols import load_protocols
+except ImportError:
+    from plot_kpi_charts import (
+        CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
+        PAIRED_SUMMARY_CSV, SUMMARY_CSV,
+    )
+    from protocols import load_protocols
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUMMARY_CSV = os.path.join(PROJECT_DIR, "results", "rawData", "final_metrics_summary.csv")
+
+SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
+if os.path.isdir(SSD_DIR):
+    PROJECT_DIR = SSD_DIR
+else:
+    PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VALUES_CSV = os.path.join(PROJECT_DIR, "results", "rawData", "kpi_heatmap_values.csv")
 PLOTS_DIR = os.path.join(PROJECT_DIR, "results", "plots")
 OUTPUT_PNG = os.path.join(PLOTS_DIR, "kpi_heatmaps.png")
@@ -14,223 +30,72 @@ OUTPUT_PDF = os.path.join(PLOTS_DIR, "kpi_heatmaps.pdf")
 
 TOPOLOGY_ORDER = ["highway", "urbanRoad", "intersection"]
 FLOW_ORDER = ["low_flow", "medium_flow", "high_flow"]
-PROTOCOL_ORDER = [
-    "ASCON_128", 
-    "Chaskey", 
-    # "Proposed_V2X", 
-    "Ed25519"
-]
-BASE_CAM_BYTES = 64
-PROTOCOL_OVERHEAD_BYTES = {
-    "ASCON_128": 16,
-    "Chaskey": 16,
-    # "Proposed_V2X": 12,
-    "Ed25519": 64,
-}
+PROTOCOL_ORDER = list(load_protocols())
 
 
-def load_summary():
-    if not os.path.isfile(SUMMARY_CSV):
-        raise FileNotFoundError(
-            f"No se encontró {SUMMARY_CSV}. Ejecuta primero analyze_stage4_results.py."
-        )
-
-    summary = pd.read_csv(SUMMARY_CSV)
-    required = {"Topology", "Protocol", "Scenario", "name", "Mean"}
-    missing = required - set(summary.columns)
-    if missing:
-        raise ValueError(f"Faltan columnas en el resumen: {', '.join(sorted(missing))}")
-    return summary
-
-
-def build_kpi_values(summary):
-    scalar_means = summary.pivot_table(
-        index=["Topology", "Protocol", "Scenario"],
-        columns="name",
-        values="Mean",
-        aggfunc="first",
-    )
-
-    required_scalars = {"receivedBSMs", "channelBusy:timeavg"}
-    missing = required_scalars - set(scalar_means.columns)
-    if missing:
-        raise ValueError(f"Faltan escalares para los heatmaps: {', '.join(sorted(missing))}")
-
-    channel_busy = scalar_means["channelBusy:timeavg"] * 100
-
-    latency_total_name = "packetLatencyTotalMs"
-    latency_samples_name = "packetLatencySamples"
-    if {latency_total_name, latency_samples_name} <= set(scalar_means.columns):
-        latency_samples = scalar_means[latency_samples_name]
-        latency_ms = scalar_means[latency_total_name] / latency_samples.where(latency_samples > 0)
-        latency_calculation = f"{latency_total_name} / {latency_samples_name} (ms)"
-    else:
-        latency_names = [
-        name for name in scalar_means.columns
-        if "latency" in str(name).lower() or "delay" in str(name).lower()
-        ]
-        if latency_names:
-            latency_name = latency_names[0]
-            latency_ms = scalar_means[latency_name]
-            if not str(latency_name).lower().endswith("ms"):
-                latency_ms = latency_ms * 1000
-            latency_calculation = f"{latency_name} (converted to ms when needed)"
-        else:
-            latency_ms = pd.Series(np.nan, index=scalar_means.index)
-            latency_calculation = "Unavailable: no latency/delay scalar in summary"
-            print("[AVISO] El CSV no contiene latencia. Ejecuta las simulaciones con el módulo instrumentado para registrar packetLatencyTotalMs/packetLatencySamples.")
-
-    crypto_kpis = []
-    for total_name, count_name, label in [
-        ("cryptoTxDelayTotalMs", "cryptoTxOperationCount", "Crypto TX processing (ms)"),
-        ("cryptoRxDelayTotalMs", "cryptoRxOperationCount", "Crypto RX processing (ms)"),
-    ]:
-        if {total_name, count_name} <= set(scalar_means.columns):
-            operation_count = scalar_means[count_name]
-            crypto_kpis.append((
-                label,
-                scalar_means[total_name] / operation_count.where(operation_count > 0),
-                f"{total_name} / {count_name} (ms)",
-            ))
-
-    rows = []
-    for topology in TOPOLOGY_ORDER:
-        for flow in FLOW_ORDER:
-            for protocol in PROTOCOL_ORDER:
-                key = (topology, protocol, flow)
-                if key not in scalar_means.index:
-                    continue
-
-                overhead_bytes = PROTOCOL_OVERHEAD_BYTES.get(protocol)
-                overhead_percent = (
-                    overhead_bytes / BASE_CAM_BYTES * 100
-                    if overhead_bytes is not None
-                    else np.nan
-                )
-                rows.extend([
-                    {
-                        "Topology": topology,
-                        "Protocol": protocol,
-                        "Scenario": flow,
-                        "KPI": "Received BSMs per vehicle",
-                        "Value": scalar_means["receivedBSMs"].loc[key],
-                        "Calculation": "Mean receivedBSMs scalar across vehicles and runs; not a packet delivery ratio",
-                    },
-                    {
-                        "Topology": topology,
-                        "Protocol": protocol,
-                        "Scenario": flow,
-                        "KPI": "Channel Busy Rate (%)",
-                        "Value": channel_busy.loc[key],
-                        "Calculation": "channelBusy:timeavg * 100",
-                    },
-                    {
-                        "Topology": topology,
-                        "Protocol": protocol,
-                        "Scenario": flow,
-                        "KPI": "Latency (ms)",
-                        "Value": latency_ms.loc[key],
-                        "Calculation": latency_calculation,
-                    },
-                    {
-                        "Topology": topology,
-                        "Protocol": protocol,
-                        "Scenario": flow,
-                        "KPI": "CAM Crypto Overhead (%)",
-                        "Value": overhead_percent,
-                        "Calculation": f"Applied {overhead_bytes} extra bytes / {BASE_CAM_BYTES} baseline CAM bytes * 100; excludes processing delay" if overhead_bytes is not None else "Unavailable: unknown protocol",
-                    },
-                ])
-                for label, values, calculation in crypto_kpis:
-                    rows.append({
-                        "Topology": topology,
-                        "Protocol": protocol,
-                        "Scenario": flow,
-                        "KPI": label,
-                        "Value": values.loc[key],
-                        "Calculation": calculation,
-                    })
-
-    return pd.DataFrame(rows)
-
-
-def draw_heatmap(ax, values, title, row_labels, protocols, cmap, unavailable_note=None):
+def draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric=False):
     matrix = values.reindex(index=row_labels, columns=protocols).to_numpy(dtype=float)
-    masked = np.ma.masked_invalid(matrix)
+    finite = matrix[np.isfinite(matrix)]
+    limit = np.max(np.abs(finite)) if finite.size and symmetric else None
+    image = ax.imshow(
+        np.ma.masked_invalid(matrix), aspect="auto", cmap=cmap,
+        vmin=-limit if limit else None, vmax=limit,
+    )
+    ax.set_xticks(range(len(protocols)), protocols, rotation=20, ha="right")
+    ax.set_yticks(range(len(row_labels)), row_labels)
+    ax.set_title(title, fontsize=10)
 
-    if masked.count() == 0:
-        ax.set_facecolor("#eeeeee")
-        ax.text(
-            0.5,
-            0.5,
-            unavailable_note or "N/D: no data in summary CSV",
-            ha="center",
-            va="center",
-            wrap=True,
-            transform=ax.transAxes,
-        )
-        ax.set_title(title)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        return
+    for row in range(matrix.shape[0]):
+        for column in range(matrix.shape[1]):
+            cell = matrix[row, column]
+            if not np.isfinite(cell):
+                ax.text(column, row, "N/D", ha="center", va="center", fontsize=7, color="#777777")
+                continue
+            r, g, b, _ = image.cmap(image.norm(cell))
+            text_color = "black" if 0.299 * r + 0.587 * g + 0.114 * b > 0.5 else "white"
+            ax.text(column, row, f"{cell:.4g}", ha="center", va="center", fontsize=8, color=text_color)
 
-    colormap = plt.get_cmap(cmap).copy()
-    colormap.set_bad("#e5e7eb")
-    image = ax.imshow(masked, aspect="auto", cmap=colormap)
-    ax.set_title(title)
-    ax.set_xticks(np.arange(len(protocols)), protocols, rotation=25, ha="right")
-    ax.set_yticks(np.arange(len(row_labels)), row_labels)
-    ax.set_xticks(np.arange(-0.5, len(protocols), 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, len(row_labels), 1), minor=True)
-    ax.grid(which="minor", color="white", linewidth=1.5)
-    ax.tick_params(which="minor", bottom=False, left=False)
-
-    midpoint = (image.norm.vmin + image.norm.vmax) / 2
-    for row in range(len(row_labels)):
-        for column in range(len(protocols)):
-            value = matrix[row, column]
-            if np.isnan(value):
-                label = "N/D"
-                color = "#333333"
-            else:
-                label = f"{value:.1f}"
-                color = "white" if value < midpoint else "#171717"
-            ax.text(column, row, label, ha="center", va="center", color=color, fontsize=8)
-
-    ax.figure.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
+    if finite.size:
+        ax.figure.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
 
 
-def generate_heatmaps(kpi_values):
-    os.makedirs(PLOTS_DIR, exist_ok=True)
-    kpi_values.to_csv(VALUES_CSV, index=False)
-
+def build_panels(summary, paired):
     row_labels = [f"{topology} / {flow}" for topology in TOPOLOGY_ORDER for flow in FLOW_ORDER]
-    kpi_values = kpi_values.copy()
-    kpi_values["Row"] = kpi_values["Topology"] + " / " + kpi_values["Scenario"]
-    protocols = [protocol for protocol in PROTOCOL_ORDER if protocol in kpi_values["Protocol"].unique()]
 
-    specifications = [
-        ("Received BSMs per vehicle", "Received BSMs per vehicle", "YlGn", None),
-        ("Channel Busy Rate (%)", "Channel Busy Rate (%)", "YlOrRd", None),
-        ("Latency (ms)", "Latency (ms)", "magma", "No latency/delay scalar is recorded in the existing summary CSV."),
-        ("CAM Crypto Overhead (%)", "CAM Crypto Overhead (%)", "Blues", None),
-        ("Crypto TX processing (ms)", "Crypto TX processing (ms)", "Purples", "No crypto TX timing scalars are recorded in this summary."),
-        ("Crypto RX processing (ms)", "Crypto RX processing (ms)", "Greens", "No crypto RX timing scalars are recorded in this summary."),
+    def run_level(kpi):
+        rows = summary[summary["KPI"] == kpi].assign(Row=lambda d: d["Topology"] + " / " + d["Scenario"])
+        return rows.pivot_table(index="Row", columns="Protocol", values="Mean", aggfunc="first")
+
+    def paired_level(kpi):
+        rows = paired[paired["KPI"] == kpi].assign(Row=lambda d: d["Topology"] + " / " + d["Scenario"])
+        return rows.pivot_table(index="Row", columns="Protocol", values="MeanDiff", aggfunc="first")
+
+    return row_labels, [
+        ("p99 processing latency (ms)", run_level(PROCESSING_P99_KPI), "magma", False),
+        ("CPU utilization (%)", run_level(CPU_KPI), "YlOrRd", False),
+        ("Deadline misses (% of CAM operations)", run_level(DEADLINE_KPI), "Reds", False),
+        ("Δ processing latency vs baseline (ms)", paired_level(PROCESSING_KPI), "RdBu_r", True),
+        ("Δ end-to-end latency vs baseline (ms)", paired_level(LATENCY_KPI), "RdBu_r", True),
+        ("Δ PDR vs baseline (pp)", paired_level(PDR_KPI), "RdBu_r", True),
     ]
 
-    figure, axes = plt.subplots(2, 3, figsize=(20, 11), constrained_layout=True)
-    for ax, (kpi_name, title, cmap, unavailable_note) in zip(axes.flat, specifications):
-        values = kpi_values[kpi_values["KPI"] == kpi_name].pivot_table(
-            index="Row",
-            columns="Protocol",
-            values="Value",
-            aggfunc="first",
-        )
-        draw_heatmap(ax, values, title, row_labels, protocols, cmap, unavailable_note)
 
-    figure.suptitle("Simulation KPIs by topology, traffic flow, and protocol", fontsize=15)
+def generate_heatmaps(summary, paired):
+    os.makedirs(PLOTS_DIR, exist_ok=True)
+    row_labels, panels = build_panels(summary, paired)
+    protocols = PROTOCOL_ORDER
+
+    exported = [
+        values.assign(Panel=title).reset_index()
+        for title, values, _, _ in panels if not values.empty
+    ]
+    if exported:
+        pd.concat(exported, ignore_index=True).to_csv(VALUES_CSV, index=False)
+
+    figure, axes = plt.subplots(2, 3, figsize=(20, 11), constrained_layout=True)
+    for ax, (title, values, cmap, symmetric) in zip(axes.flat, panels):
+        draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric)
+    figure.suptitle("FF1 protocols versus baseline: processing cost, channel load and paired deltas", fontsize=14)
     figure.savefig(OUTPUT_PNG, dpi=220, bbox_inches="tight")
     figure.savefig(OUTPUT_PDF, bbox_inches="tight")
     plt.close(figure)
@@ -241,9 +106,9 @@ def generate_heatmaps(kpi_values):
 
 
 def main():
-    summary = load_summary()
-    kpi_values = build_kpi_values(summary)
-    generate_heatmaps(kpi_values)
+    summary = pd.read_csv(SUMMARY_CSV)
+    paired = pd.read_csv(PAIRED_SUMMARY_CSV)
+    generate_heatmaps(summary, paired)
 
 
 if __name__ == "__main__":

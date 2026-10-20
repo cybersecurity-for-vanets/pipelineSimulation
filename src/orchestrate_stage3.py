@@ -8,9 +8,10 @@ import json
 import time
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
 CONF_DIR = os.path.join(BASE_DIR, "conf")
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
-RESULTS_DIR = os.path.join(BASE_DIR, "results", "rawData")
+LOGS_DIR = None # os.path.join(BASE_DIR, "logs")
+RESULTS_DIR = None #os.path.join(BASE_DIR, "results", "rawData")
 INI_FILE = os.path.join(CONF_DIR, "omnetpp.ini")
 SCENARIOS_CONF_PATH = os.path.join(CONF_DIR, "coordinates_scenaries.json")
 
@@ -23,7 +24,7 @@ NED_PATH = f"/Users/fabiotorres/veins-veins-5.3.1/ned:{CONF_DIR}"
 LATENCY_APP_DIR = os.path.join(BASE_DIR, "src", "latency")
 LATENCY_PLUGIN_LIB = None
 
-os.makedirs(RESULTS_DIR, exist_ok=True)
+# os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def load_known_topologies():
     """Carrega dinamicamente as chaves de topologia cadastradas no JSON."""
@@ -167,4 +168,12 @@ def main():
         log_file.close()
 
 if __name__ == "__main__":
+    if os.path.isdir(SSD_DIR):
+        LOGS_DIR = os.path.join(SSD_DIR, "logs")
+        RESULTS_DIR = os.path.join(SSD_DIR, "results", "rawData")
+        os.makedirs(SSD_DIR, exist_ok=True)
+    else:
+        LOGS_DIR = os.path.join(BASE_DIR, "logs")
+        RESULTS_DIR = os.path.join(BASE_DIR, "results", "rawData")
+        os.makedirs(RESULTS_DIR, exist_ok=True)
     main()

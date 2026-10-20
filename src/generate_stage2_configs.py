@@ -3,19 +3,38 @@ import json
 import math
 import xml.etree.ElementTree as ET
 
+try:
+    from .protocols import load_cam_model, load_crypto_timings, load_protocols
+    from .generate_routes import SUMO_STEP_LENGTH
+except ImportError:
+    from protocols import load_cam_model, load_crypto_timings, load_protocols
+    from generate_routes import SUMO_STEP_LENGTH
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENARIOS_CONF_PATH = os.path.join(BASE_DIR, "conf", "coordinates_scenaries.json")
 TOMTOM_CONF_PATH = os.path.join(BASE_DIR, "conf", "tomtom.json")
 TRAFFIC_DIR = os.path.join(BASE_DIR, "trafficXmlFiles")
 INI_OUTPUT_PATH = os.path.join(BASE_DIR, "conf", "omnetpp.ini")
 
-PROTOCOLS = {
-    "ASCON_128": {"overhead_bytes": 16, "tx_delay_us": 0, "rx_delay_us": 0},
-    "Chaskey": {"overhead_bytes": 16, "tx_delay_us": 0, "rx_delay_us": 0},
-    "Ed25519": {"overhead_bytes": 64, "tx_delay_us": 0, "rx_delay_us": 0},
-}
-
 PLAYGROUND_MARGIN_M = 500
+
+def load_protocol_profiles():
+    """Junta conf/protocols.json com os atrasos medidos em conf/crypto_timings.json (ECDSA + FF1)."""
+    timings = load_crypto_timings()
+    machine = timings.get("metadata", {})
+    if machine.get("system") == "Darwin":
+        print(f"[AVISO] crypto_timings.json foi medido em {machine.get('host')} ({machine.get('machine')}), não numa OBU.")
+    profiles = {}
+    for name, protocol in load_protocols().items():
+        if name not in timings:
+            raise KeyError(f"No timing for '{name}' in crypto_timings.json; rerun benchmark_crypto.py")
+        profiles[name] = {
+            "cipher": protocol["cipher"] or "none",
+            "overhead_bytes": protocol["overhead_bytes"],
+            "tx_delay_us": timings[name]["tx_delay_us"],
+            "rx_delay_us": timings[name]["rx_delay_us"],
+        }
+    return profiles
 
 def get_topology_bounds(topology):
     net_path = os.path.join(BASE_DIR, "osmFiles", f"{topology}.net.xml")
@@ -34,6 +53,9 @@ def generate_omnetpp_ini():
         scenarios = list(json.load(f).keys())
     with open(TOMTOM_CONF_PATH, "r", encoding="utf-8") as f:
         flows = list(json.load(f)["hcm_flow_rates_veh_per_hour_per_lane"].keys())
+    protocols = load_protocol_profiles()
+    cam_model = load_cam_model()
+    total_configs = len(scenarios) * len(protocols) * len(flows)
 
     launchd_files = {}
     for top in scenarios:
@@ -59,7 +81,7 @@ def generate_omnetpp_ini():
     with open(default_launchd, "w", encoding="utf-8") as f:
         f.write(launchd_content)
 
-    ini_content = """# ==============================================================================
+    ini_content = f"""# ==============================================================================
 # CONFIGURAÇÃO AUTOMÁTICA DO OMNET++ / VEINS 5.3.1 (ETAPA 2)
 # ==============================================================================
 
@@ -69,7 +91,7 @@ cmdenv-autoflush = true
 cmdenv-status-frequency = 10s
 sim-time-limit = 600s
 repeat = 30
-seed-set = ${repetition}
+seed-set = ${{repetition}}
 
 network = RSUExampleScenario
 *.playgroundSizeX = 3000m
@@ -80,7 +102,7 @@ network = RSUExampleScenario
 *.obstacles.debug = false
 
 # Administrador TraCI / SUMO
-*.manager.updateInterval = 1s
+*.manager.updateInterval = {SUMO_STEP_LENGTH}s
 *.manager.host = "localhost"
 *.manager.port = 9999
 *.manager.autoShutdown = true
@@ -108,7 +130,7 @@ network = RSUExampleScenario
 
 # Veículos e Mobilidade
 *.node[*].applType = "pipelineSimulation.LatencyTraCIDemo11p"
-*.node[*].appl.headerLength = 256bit
+*.node[*].appl.headerLength = {cam_model['gn_btp_header_bytes'] * 8}bit
 *.node[*].appl.dataLengthBits = 800bit
 *.node[*].appl.sendBeacons = false
 *.node[*].appl.dataOnSch = false
@@ -121,6 +143,13 @@ network = RSUExampleScenario
 *.node[*].appl.camSpeedThreshold = 0.5mps
 *.node[*].appl.cbrLowThreshold = 0.3
 *.node[*].appl.cbrHighThreshold = 0.6
+*.node[*].appl.cryptoCipher = "none"
+# Modelo estrutural de tamanho do CAM assinado (conf/cam_model.json)
+*.node[*].appl.camBaseBytes = {cam_model['cam_base_bytes']}
+*.node[*].appl.camLowFrequencyExtraBytes = {cam_model['low_frequency_extra_bytes']}
+*.node[*].appl.camCertificateExtraBytes = {cam_model['certificate_extra_bytes']}
+*.node[*].appl.camLowFrequencyInterval = {cam_model['low_frequency_interval_s']}s
+*.node[*].appl.camCertificateInterval = {cam_model['certificate_interval_s']}s
 *.node[*].appl.cryptoOverheadBits = 0bit
 *.node[*].appl.cryptoTxDelay = 0us
 *.node[*].appl.cryptoRxDelay = 0us
@@ -162,7 +191,7 @@ network = RSUExampleScenario
         rsu_x = (min_x + max_x) / 2
         rsu_y = (min_y + max_y) / 2
 
-        for proto_name, crypto_profile in PROTOCOLS.items():
+        for proto_name, crypto_profile in protocols.items():
             for flow in flows:
                 count += 1
                 config_name = f"Config_{top}_{proto_name}_{flow}"
@@ -171,7 +200,7 @@ network = RSUExampleScenario
                 
                 ini_content += f"""
 # ------------------------------------------------------------------------------
-# [{count}/36] Topologia: {top} | Protocolo: {proto_name} | Fluxo HCM: {flow}
+# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | Fluxo HCM: {flow}
 # ------------------------------------------------------------------------------
 [Config {config_name}]
 description = "{top} - {proto_name} - {flow}"
@@ -180,9 +209,10 @@ description = "{top} - {proto_name} - {flow}"
 *.playgroundSizeY = {playground_y}m
 *.rsu[0].mobility.x = {rsu_x:.2f}
 *.rsu[0].mobility.y = {rsu_y:.2f}
+*.node[*].appl.cryptoCipher = "{crypto_profile['cipher']}"
 *.node[*].appl.cryptoOverheadBits = {overhead_bits}bit
-*.node[*].appl.cryptoTxDelay = {crypto_profile['tx_delay_us']}us
-*.node[*].appl.cryptoRxDelay = {crypto_profile['rx_delay_us']}us
+*.node[*].appl.cryptoTxDelay = {crypto_profile['tx_delay_us']:.3f}us
+*.node[*].appl.cryptoRxDelay = {crypto_profile['rx_delay_us']:.3f}us
 """
 
     with open(INI_OUTPUT_PATH, "w", encoding="utf-8") as f:

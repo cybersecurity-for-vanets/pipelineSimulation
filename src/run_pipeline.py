@@ -25,8 +25,9 @@ def run_step(step_name, script_name):
 def main():
     print("==================================================")
     print(" INICIANDO PIPELINE COMPLETO DE SIMULAÇÃO (VANET)")
-    print(" Matriz: 3 Topologias x 3 Densidades x 3 Protocolos")
-    print(" Total: 27 Configurações | 810 Simulações OMNeT++")
+    print(" Matriz: 3 Topologias x 3 Densidades x 4 Protocolos")
+    print(" Protocolos: baseline, FF1-AES, FF1-LEA, FF1-SPECK")
+    print(" Total: 36 Configurações | 1080 Simulações OMNeT++")
     print("==================================================")
 
     # Etapa 1: Dados históricos, calibração de Krauss e rotas SUMO
@@ -34,10 +35,13 @@ def main():
     run_step("Etapa 1.2 - Microcalibração Krauss por topologia", "calibrate_stage1.py")
     run_step("Etapa 1.3 - Geração das rotas SUMO calibradas", "generate_routes.py")
 
+    # Etapa 2.0: Tempos de FF1 medidos na implementação C++ usada pelo módulo Veins
+    run_step("Etapa 2.0 - Benchmark FF1 (AES/LEA/SPECK)", "benchmark_crypto.py")
+
     # Etapa 2: Regerar omnetpp.ini e Estruturas de Configuração
     run_step("Etapa 2 - Configurações OMNeT++", "generate_stage2_configs.py")
 
-    # # Etapa 3: Execução Paralela no Apple M1 (36 configs x 30 seeds)
+    # Etapa 3: Execução Paralela no Apple M1 (36 configs x 30 seeds)
     run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3.py")
 
     # # Etapa 4: Extração com opp_scavetool e Geração de Gráficos
