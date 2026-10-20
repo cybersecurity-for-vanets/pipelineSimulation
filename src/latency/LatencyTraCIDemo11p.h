@@ -23,7 +23,8 @@ protected:
         SEND_ADAPTIVE_CAM = 100,
         UPDATE_CHANNEL_BUSY_RATIO = 101,
         SEND_CAM_AFTER_CRYPTO = 102,
-        PROCESS_CAM_AFTER_CRYPTO = 103
+        PROCESS_CAM_AFTER_CRYPTO = 103,
+        WARMUP_END = 104
     };
 
     double latencyTotalMs = 0;
@@ -45,6 +46,8 @@ protected:
     // Single-core OBU processing model: FIFO shared by tx and rx operations.
     omnetpp::simtime_t cpuBusyUntil;
     omnetpp::simtime_t camProcessingDeadline;
+    // Statistics (scalars and per-message vectors) restart at warmupTime; protocol state is kept.
+    omnetpp::simtime_t warmupTime;
     double cpuBusyTimeS = 0;
     double cpuQueueWaitTotalS = 0;
     long cpuQueueSamples = 0;
@@ -63,6 +66,21 @@ protected:
     double peakAoITotalS = 0;
     // station id -> (arrival time, generation time) of its last received CAM.
     std::unordered_map<uint32_t, std::pair<omnetpp::simtime_t, omnetpp::simtime_t>> lastRxByStation;
+
+    // Per-message vectors (NED: recordMessageVectors); each vector keeps its own sampling counter.
+    struct MessageVector {
+        omnetpp::cOutVector vector;
+        long seen = 0;
+    };
+    bool recordMessageVectors = false;
+    int messageVectorStride = 1;
+    MessageVector latencyEndToEndVec;
+    MessageVector processingLatencyVec;
+    MessageVector networkLatencyVec;
+    MessageVector cpuQueueWaitVec;
+    MessageVector ipgVec;
+    MessageVector aoiVec;
+    MessageVector camBitsVec;
 
     std::unique_ptr<crypto::BlockCipher> camBlockCipher;
     std::unique_ptr<crypto::CamFieldCipher> camFieldCipher;
@@ -84,6 +102,7 @@ protected:
     omnetpp::cMessage* adaptiveCamEvent = nullptr;
     omnetpp::cMessage* channelBusyRatioEvent = nullptr;
     omnetpp::cMessage* camCryptoEvent = nullptr;
+    omnetpp::cMessage* warmupEvent = nullptr;
     veins::DemoSafetyMessage* pendingCam = nullptr;
     omnetpp::simtime_t camMinInterval;
     omnetpp::simtime_t camMaxInterval;
@@ -125,9 +144,11 @@ protected:
     void sendPendingCam();
     void processReceivedCam(veins::DemoSafetyMessage* bsm);
     void updateChannelBusyRatio();
+    void resetStatistics();
     long countPotentialCamReceivers(long* byDistance) const;
     bool isVehicleCam(const veins::DemoSafetyMessage* bsm) const;
     double recordLatency(const omnetpp::cMessage* message);
+    void recordMessageSample(MessageVector& sample, double value);
     crypto::CamSensitiveFields currentCamFields() const;
     void applyCamSize(veins::DemoSafetyMessage* cam);
     void attachCamFields(veins::DemoSafetyMessage* cam) const;

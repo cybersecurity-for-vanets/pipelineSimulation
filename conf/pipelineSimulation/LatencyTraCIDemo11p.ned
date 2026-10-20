@@ -26,4 +26,9 @@ simple LatencyTraCIDemo11p extends TraCIDemo11p
         int cryptoOverheadBits @unit(bit) = default(0bit);
         double cryptoTxDelay @unit(s) = default(0s);
         double cryptoRxDelay @unit(s) = default(0s);
+        // Per-message vectors (latency, processing, CPU queue wait, IPG, AoI, CAM bits) for percentiles; large, off by default.
+        // Warm-up: scalars and per-message vectors restart at this time (0s = no warm-up).
+        double warmupTime @unit(s) = default(0s);
+        bool recordMessageVectors = default(false);
+        int messageVectorStride = default(1); // keep every Nth sample of each vector
 }

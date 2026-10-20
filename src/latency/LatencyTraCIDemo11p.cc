@@ -54,6 +54,7 @@ pipelineSimulation::LatencyTraCIDemo11p::~LatencyTraCIDemo11p()
     cancelAndDelete(adaptiveCamEvent);
     cancelAndDelete(channelBusyRatioEvent);
     cancelAndDelete(camCryptoEvent);
+    cancelAndDelete(warmupEvent);
     delete pendingCam;
 }
 
@@ -73,6 +74,23 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
         cryptoOverheadBits = par("cryptoOverheadBits").intValue();
         cryptoTxDelay = SimTime(par("cryptoTxDelay").doubleValue());
         cryptoRxDelay = SimTime(par("cryptoRxDelay").doubleValue());
+
+        warmupTime = SimTime(par("warmupTime").doubleValue());
+        if (warmupTime < SIMTIME_ZERO) {
+            throw cRuntimeError("warmupTime must be non-negative");
+        }
+        recordMessageVectors = par("recordMessageVectors").boolValue();
+        messageVectorStride = par("messageVectorStride").intValue();
+        if (messageVectorStride < 1) {
+            throw cRuntimeError("messageVectorStride must be at least 1");
+        }
+        latencyEndToEndVec.vector.setName("latencyEndToEndMs");
+        processingLatencyVec.vector.setName("processingLatencyMs");
+        networkLatencyVec.vector.setName("networkLatencyMs");
+        cpuQueueWaitVec.vector.setName("cpuQueueWaitMs");
+        ipgVec.vector.setName("ipgMs");
+        aoiVec.vector.setName("aoiMs");
+        camBitsVec.vector.setName("camBits");
 
         auto* connectionManager = getSimulation()->getSystemModule()->getSubmodule("connectionManager");
         if (!connectionManager) {
@@ -123,6 +141,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
         adaptiveCamEvent = new cMessage("adaptive CAM event", SEND_ADAPTIVE_CAM);
         channelBusyRatioEvent = new cMessage("channel busy ratio event", UPDATE_CHANNEL_BUSY_RATIO);
         camCryptoEvent = new cMessage("CAM crypto processing event", SEND_CAM_AFTER_CRYPTO);
+        warmupEvent = new cMessage("warm-up end event", WARMUP_END);
 
         auto* macModule = veins::FindModule<veins::Mac1609_4*>::findSubModule(getParentModule());
         if (!macModule) {
@@ -134,6 +153,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
         channelStateChangedAt = simTime();
         scheduleAt(simTime(), adaptiveCamEvent);
         scheduleAt(simTime() + cbrWindow, channelBusyRatioEvent);
+        if (warmupTime > SIMTIME_ZERO) scheduleAt(warmupTime, warmupEvent);
     }
 }
 
@@ -161,6 +181,11 @@ void pipelineSimulation::LatencyTraCIDemo11p::handleSelfMsg(cMessage* msg)
 
     if (msg == camCryptoEvent) {
         sendPendingCam();
+        return;
+    }
+
+    if (msg == warmupEvent) {
+        resetStatistics();
         return;
     }
 
@@ -278,6 +303,8 @@ void pipelineSimulation::LatencyTraCIDemo11p::processReceivedCam(veins::DemoSafe
     const double processingS = txProcessingS + rxProcessingS;
     processingLatencyTotalMs += processingS * 1000.0;
     networkLatencyTotalMs += (latencyS - processingS) * 1000.0;
+    recordMessageSample(processingLatencyVec, processingS * 1000.0);
+    recordMessageSample(networkLatencyVec, (latencyS - processingS) * 1000.0);
     ++processingBins[std::min(static_cast<int>(processingS / PROCESSING_BIN_S), PROCESSING_BINS)];
 
     ++pdrReceivedByDistance[distanceBin(curPosition.distance(bsm->getSenderPos()))];
@@ -287,9 +314,13 @@ void pipelineSimulation::LatencyTraCIDemo11p::processReceivedCam(veins::DemoSafe
     const simtime_t generation = bsm->getCreationTime();
     auto previous = lastRxByStation.find(stationId);
     if (previous != lastRxByStation.end()) {
-        ipgTotalS += (now - previous->second.first).dbl();
+        const double ipgS = (now - previous->second.first).dbl();
+        const double aoiS = (now - previous->second.second).dbl();
+        ipgTotalS += ipgS;
         ++ipgSamples;
-        peakAoITotalS += (now - previous->second.second).dbl();
+        peakAoITotalS += aoiS;
+        recordMessageSample(ipgVec, ipgS * 1000.0);
+        recordMessageSample(aoiVec, aoiS * 1000.0);
         previous->second = std::make_pair(now, generation);
     }
     else {
@@ -315,6 +346,39 @@ void pipelineSimulation::LatencyTraCIDemo11p::updateChannelBusyRatio()
     const double load = std::clamp(
         (cbr - cbrLowThreshold) / (cbrHighThreshold - cbrLowThreshold), 0.0, 1.0);
     dccMinInterval = camMinInterval + (camMaxInterval - camMinInterval) * load;
+}
+
+void pipelineSimulation::LatencyTraCIDemo11p::resetStatistics()
+{
+    // End of warm-up: keep protocol state (neighbours, CPU queue, busy window, cipher) and restart the counters.
+    // ff1DecryptFailures is not reset on purpose: it must be zero over the whole run.
+    latencyTotalMs = 0;
+    latencySampleCount = 0;
+    channelBusyRatioTotal = 0;
+    channelBusyRatioSamples = 0;
+    cryptoTxDelayTotalMs = 0;
+    cryptoTxOperationCount = 0;
+    cryptoRxDelayTotalMs = 0;
+    cryptoRxOperationCount = 0;
+    pdrExpectedReceptions = 0;
+    pdrReceivedReceptions = 0;
+    camSentCount = 0;
+    camBytesTotal = 0;
+    camLowFrequencyCount = 0;
+    camCertificateCount = 0;
+    cpuBusyTimeS = 0;
+    cpuQueueWaitTotalS = 0;
+    cpuQueueSamples = 0;
+    cpuMaxQueueLength = cpuQueueLength;
+    processingDeadlineMisses = 0;
+    processingLatencyTotalMs = 0;
+    networkLatencyTotalMs = 0;
+    for (auto& bin : processingBins) bin = 0;
+    for (auto& count : pdrExpectedByDistance) count = 0;
+    for (auto& count : pdrReceivedByDistance) count = 0;
+    ipgTotalS = 0;
+    ipgSamples = 0;
+    peakAoITotalS = 0;
 }
 
 void pipelineSimulation::LatencyTraCIDemo11p::onBSM(veins::DemoSafetyMessage* bsm)
@@ -348,6 +412,8 @@ void pipelineSimulation::LatencyTraCIDemo11p::finish()
     if (channelBusyRatioSamples > 0) {
         recordScalar("meanChannelBusyRatio", channelBusyRatioTotal / channelBusyRatioSamples);
     }
+    // Length of the measurement window (after warm-up), used to normalise per-second metrics.
+    recordScalar("measurementTimeS", (simTime() - warmupTime).dbl());
     recordScalar("cryptoTxDelayTotalMs", cryptoTxDelayTotalMs);
     recordScalar("cryptoTxOperationCount", cryptoTxOperationCount);
     recordScalar("cryptoRxDelayTotalMs", cryptoRxDelayTotalMs);
@@ -390,8 +456,15 @@ double pipelineSimulation::LatencyTraCIDemo11p::recordLatency(const cMessage* me
     if (std::isfinite(latencyMs) && latencyMs >= 0) {
         latencyTotalMs += latencyMs;
         ++latencySampleCount;
+        recordMessageSample(latencyEndToEndVec, latencyMs);
     }
     return latencyS;
+}
+
+void pipelineSimulation::LatencyTraCIDemo11p::recordMessageSample(MessageVector& sample, double value)
+{
+    if (!recordMessageVectors || simTime() < warmupTime) return;
+    if (sample.seen++ % messageVectorStride == 0) sample.vector.record(value);
 }
 
 long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers(long* byDistance) const
@@ -428,6 +501,7 @@ simtime_t pipelineSimulation::LatencyTraCIDemo11p::scheduleOnCpu(cMessage* msg, 
     cpuBusyUntil = finish;
     cpuBusyTimeS += service.dbl();
     cpuQueueWaitTotalS += (start - simTime()).dbl();
+    recordMessageSample(cpuQueueWaitVec, (start - simTime()).dbl() * 1000.0);
     ++cpuQueueSamples;
     cpuMaxQueueLength = std::max(cpuMaxQueueLength, ++cpuQueueLength);
     if (finish - simTime() > camProcessingDeadline) ++processingDeadlineMisses;
@@ -486,6 +560,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::applyCamSize(veins::DemoSafetyMess
     cam->setBitLength(headerLength + bodyBytes * 8 + cryptoOverheadBits);
     ++camSentCount;
     camBytesTotal += cam->getByteLength();
+    recordMessageSample(camBitsVec, static_cast<double>(cam->getBitLength()));
 }
 
 void pipelineSimulation::LatencyTraCIDemo11p::attachCamFields(veins::DemoSafetyMessage* cam) const

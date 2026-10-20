@@ -18,6 +18,16 @@ INI_OUTPUT_PATH = os.path.join(BASE_DIR, "conf", "omnetpp.ini")
 
 PLAYGROUND_MARGIN_M = 500
 
+# Vetores por mensagem para analyze_message_metrics.py: grava 1 a cada MESSAGE_VECTOR_STRIDE amostras por vetor.
+RECORD_MESSAGE_VECTORS = True
+MESSAGE_VECTOR_STRIDE = 100
+
+# Tempo por execução: aquecimento (estado transitório) + janela de medição (regime permanente).
+# A demanda das rotas é constante (vehsPerHour), então 3600 s não agregam informação.
+WARMUP_S = 300
+MEASUREMENT_S = 200
+REPEATS = 10
+
 def load_protocol_profiles():
     """Junta conf/protocols.json com os atrasos medidos em conf/crypto_timings.json (ECDSA + FF1)."""
     timings = load_crypto_timings()
@@ -89,8 +99,8 @@ def generate_omnetpp_ini():
 cmdenv-express-mode = true
 cmdenv-autoflush = true
 cmdenv-status-frequency = 10s
-sim-time-limit = 600s
-repeat = 30
+sim-time-limit = {WARMUP_S + MEASUREMENT_S}s
+repeat = {REPEATS}
 seed-set = ${{repetition}}
 
 network = RSUExampleScenario
@@ -153,6 +163,10 @@ network = RSUExampleScenario
 *.node[*].appl.cryptoOverheadBits = 0bit
 *.node[*].appl.cryptoTxDelay = 0us
 *.node[*].appl.cryptoRxDelay = 0us
+# Estatísticas (escalares e vetores por mensagem) começam após o aquecimento
+*.node[*].appl.warmupTime = {WARMUP_S}s
+*.node[*].appl.recordMessageVectors = {str(RECORD_MESSAGE_VECTORS).lower()}
+*.node[*].appl.messageVectorStride = {MESSAGE_VECTOR_STRIDE}
 *.node[*].appl.beaconUserPriority = 7
 *.node[*].appl.dataUserPriority = 5
 
