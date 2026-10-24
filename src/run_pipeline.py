@@ -31,7 +31,7 @@ def main():
     print("==================================================")
 
     # Etapa 1: Dados históricos, calibração de Krauss e rotas SUMO
-    # run_step("Etapa 1.1 - Redes OSM e Traffic Stats TomTom", "fetch_data.py")
+    run_step("Etapa 1.1 - Redes OSM e Traffic Stats TomTom", "fetch_data.py")
     run_step("Etapa 1.2 - Microcalibração Krauss por topologia", "calibrate_stage1.py")
     run_step("Etapa 1.3 - Geração das rotas SUMO calibradas", "generate_routes.py")
 

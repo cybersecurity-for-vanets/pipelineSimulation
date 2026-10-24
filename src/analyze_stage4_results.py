@@ -23,6 +23,11 @@ OUTPUT_CSV = os.path.join(RESULTS_DIR, "scavetool_export.csv")
 SUMMARY_CSV = os.path.join(RESULTS_DIR, "final_metrics_summary.csv")
 PLOTS_DIR = os.path.join(RESULTS_DIR, "../plots")
 
+# Histogram of processing latency: procBin_k is the count in bin k (see LatencyTraCIDemo11p.h)
+PROCESSING_BIN_PREFIX = "procBin_"
+PROCESSING_BINS = 200
+PROCESSING_BIN_MS = 0.01
+
 SCAVETOOL_BIN = "/Users/fabiotorres/omnetpp-6.2.0/bin/opp_scavetool"
 
 os.makedirs(PLOTS_DIR, exist_ok=True)
@@ -160,11 +165,20 @@ def process_metrics():
 # ==============================================================================
 # 4. GERAÇÃO DE GRÁFICOS COMPARATIVOS
 # ==============================================================================
+def sort_protocols(values):
+    protocol_order = list(load_protocols())
+    return sorted(
+        values,
+        key=lambda name: (protocol_order.index(name) if name in protocol_order else len(protocol_order), name),
+    )
+
 def generate_plots(summary):
     print("[3/4] Gerando gráficos para a dissertação...")
-    
+
     scenarios_order = ["low_flow", "medium_flow", "high_flow"]
-    available_metrics = summary['name'].unique()
+    # procBin_* are histogram bins, plotted by plot_processing_histograms instead.
+    is_bin = summary['name'].str.startswith(PROCESSING_BIN_PREFIX)
+    available_metrics = summary.loc[~is_bin, 'name'].unique()
 
     print(f"[INFO] Métricas encontradas no dataset: {list(available_metrics)}")
 
@@ -172,85 +186,71 @@ def generate_plots(summary):
         print("[AVISO] Nenhuma métrica escalar encontrada para plotagem.")
         return
 
-    # Keep each topology separate so its results remain comparable.
+    # One axis per metric: x groups are topologies, each group holds its flows, bars are protocols.
+    colors = plt.get_cmap("Set2")
     for metric_name in available_metrics:
         metric_data = summary[summary['name'] == metric_name]
-        
+
         if metric_data.empty:
             continue
 
         topologies = sorted(metric_data['Topology'].unique())
+        flows = scenarios_order
         safe_filename = "".join([c if c.isalnum() else "_" for c in metric_name]).strip("_")
-        protocol_order = list(load_protocols())
-        protocols = sorted(
-            metric_data['Protocol'].unique(),
-            key=lambda name: (protocol_order.index(name) if name in protocol_order else len(protocol_order), name),
-        )
+        protocols = sort_protocols(metric_data['Protocol'].unique())
         grouped = metric_data.set_index(['Topology', 'Scenario', 'Protocol'])
-        fig, axes = plt.subplots(
-            1,
-            len(topologies),
-            figsize=(6 * len(topologies), 4.5),
-            sharey=True,
-            squeeze=False
-        )
-        legend_handles = []
-        legend_labels = []
-        colors = plt.get_cmap("Set2")
+        bar_width = 0.8 / max(len(protocols), 1)
+        fig, ax = plt.subplots(figsize=(1.6 * len(topologies) * (len(flows) + 1), 4.5))
+        handles = {}
+        tick_positions, tick_labels, group_centers = [], [], []
 
-        for index, (topology, ax) in enumerate(zip(topologies, axes[0])):
-            topology_data = metric_data[metric_data['Topology'] == topology]
-            flows = [flow for flow in scenarios_order if flow in topology_data['Scenario'].unique()]
-            if not flows:
-                continue
-
-            positions = np.arange(len(flows))
-            bar_width = 0.8 / max(len(protocols), 1)
-            for protocol_index, protocol in enumerate(protocols):
-                means = []
-                confidence_intervals = []
-                for flow in flows:
+        for t_index, topology in enumerate(topologies):
+            base = t_index * (len(flows) + 1)
+            for f_index, flow in enumerate(flows):
+                position = base + f_index
+                tick_positions.append(position)
+                tick_labels.append(flow.replace("_flow", ""))
+                for protocol_index, protocol in enumerate(protocols):
                     key = (topology, flow, protocol)
                     if key in grouped.index:
                         stats = grouped.loc[key]
-                        means.append(stats['Mean'])
+                        mean = stats['Mean']
                         std = stats['Std'] if pd.notna(stats['Std']) else 0
-                        confidence_intervals.append(1.96 * std / np.sqrt(stats['Count']))
+                        confidence_interval = 1.96 * std / np.sqrt(stats['Count'])
                     else:
-                        means.append(np.nan)
-                        confidence_intervals.append(0)
+                        mean = np.nan
+                        confidence_interval = 0
 
-                offset = (protocol_index - (len(protocols) - 1) / 2) * bar_width
-                bars = ax.bar(
-                    positions + offset,
-                    means,
-                    width=bar_width,
-                    yerr=confidence_intervals,
-                    capsize=2,
-                    label=protocol,
-                    color=colors(protocol_index % colors.N)
-                )
-                if index == 0:
-                    legend_handles.append(bars[0])
-                    legend_labels.append(protocol)
+                    offset = (protocol_index - (len(protocols) - 1) / 2) * bar_width
+                    bars = ax.bar(
+                        position + offset,
+                        mean,
+                        width=bar_width,
+                        yerr=confidence_interval,
+                        capsize=2,
+                        label=protocol,
+                        color=colors(protocol_index % colors.N)
+                    )
+                    handles.setdefault(protocol, bars[0])
+            group_centers.append(base + (len(flows) - 1) / 2)
 
-            ax.set_xticks(positions, flows)
-            ax.set_title(topology)
-            ax.set_xlabel("Cenário de Densidade de Tráfego")
-            ax.grid(axis='y', linestyle='--', alpha=0.7)
-
-        axes[0][0].set_ylabel("Valor Médio")
-        if legend_handles:
-            fig.legend(
-                legend_handles,
-                legend_labels,
-                title="Protocol",
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.94),
-                ncol=len(legend_labels)
+        ax.set_xticks(tick_positions, tick_labels)
+        for center, topology in zip(group_centers, topologies):
+            ax.annotate(
+                topology,
+                xy=(center, 0),
+                xycoords=("data", "axes fraction"),
+                xytext=(0, -38),
+                textcoords="offset points",
+                ha="center",
+                va="top",
+                fontweight="bold"
             )
+        ax.set_ylabel("Valor Médio")
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        ax.legend(list(handles.values()), list(handles.keys()), title="Protocol", loc="upper right")
         fig.suptitle(f"Métrica: {metric_name}", y=0.99)
-        fig.tight_layout(rect=(0, 0, 1, 0.84))
+        fig.tight_layout()
         fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.png"))
         # fig.savefig(os.path.join(PLOTS_DIR, f"{safe_filename}.pdf"))
         plt.close(fig)
@@ -258,15 +258,100 @@ def generate_plots(summary):
 
     print(f"[OK] Processamento de gráficos concluído em: '{PLOTS_DIR}'")
 
+def plot_processing_histograms(summary):
+    """One figure with a histogram of processing latency per topology and flow, one curve per protocol."""
+    print("[3/4] Gerando histogramas de latência de processamento...")
+
+    scenarios_order = ["low_flow", "medium_flow", "high_flow"]
+    bins = summary[summary['name'].str.startswith(PROCESSING_BIN_PREFIX)].copy()
+    if bins.empty:
+        print("[AVISO] Nenhum procBin_* encontrado para histograma.")
+        return
+
+    bins['bin'] = bins['name'].str[len(PROCESSING_BIN_PREFIX):].astype(int)
+    protocols = sort_protocols(bins['Protocol'].unique())
+
+    # Stop the x-axis just after the last bin that holds any messages.
+    nonzero = bins.loc[bins['Mean'] > 0, 'bin']
+    last_bin = min(int(nonzero.max()) + 2, PROCESSING_BINS) if not nonzero.empty else 0
+    edges = np.arange(last_bin + 2) * PROCESSING_BIN_MS
+    colors = plt.get_cmap("Set2")
+
+    # One figure: columns are topologies (grouped on the x direction), rows are flows.
+    topologies = sorted(bins['Topology'].unique())
+    flows = [flow for flow in scenarios_order if flow in bins['Scenario'].unique()]
+    if not flows:
+        print("[AVISO] Nenhum fluxo conhecido encontrado para histograma.")
+        return
+
+    fig, axes = plt.subplots(
+        len(flows),
+        len(topologies),
+        figsize=(4.5 * len(topologies), 3.2 * len(flows)),
+        sharex=True,
+        sharey=True,
+        squeeze=False
+    )
+    handles = {}
+
+    for row, flow in enumerate(flows):
+        for col, topology in enumerate(topologies):
+            ax = axes[row][col]
+            cell = bins[(bins['Topology'] == topology) & (bins['Scenario'] == flow)]
+            for protocol_index, protocol in enumerate(protocols):
+                counts = (
+                    cell[cell['Protocol'] == protocol]
+                    .set_index('bin')['Mean']
+                    .reindex(range(last_bin + 1), fill_value=0)
+                )
+                stairs = ax.stairs(
+                    counts.values,
+                    edges,
+                    fill=True,
+                    alpha=0.35,
+                    linewidth=1.2,
+                    color=colors(protocol_index % colors.N),
+                    label=protocol,
+                )
+                handles.setdefault(protocol, stairs)
+
+            # Log scale: the peak bin dwarfs the tails, which would otherwise disappear.
+            ax.set_yscale("log")
+            ax.grid(axis='y', linestyle='--', alpha=0.7)
+            if row == 0:
+                ax.set_title(topology)
+            if col == 0:
+                ax.set_ylabel(flow)
+            if row == len(flows) - 1:
+                ax.set_xlabel("Latência de processamento (ms)")
+
+    fig.legend(
+        list(handles.values()),
+        list(handles.keys()),
+        title="Protocol",
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.94),
+        ncol=len(handles)
+    )
+    fig.suptitle("Mensagens por execução (média, escala log) por topologia e fluxo", y=0.99)
+    fig.tight_layout(rect=(0, 0, 1, 0.84))
+    filename = "processing_histogram.png"
+    fig.savefig(os.path.join(PLOTS_DIR, filename))
+    plt.close(fig)
+    print(f"[OK] Gráfico salvo: {filename}")
+
+    print(f"[OK] Histogramas concluídos em: '{PLOTS_DIR}'")
+
 # ==============================================================================
 # 5. EXECUÇÃO DA ETAPA 4
 # ==============================================================================
 if __name__ == "__main__":
     print("=== Iniciando Processamento e Análise da Etapa 4 ===")
-    if export_omnet_results():
-        df_raw, df_summary = process_metrics()
-        if df_raw is not None:
-            generate_plots(df_summary)
-            print("\n=== Etapa 4 Concluída com Sucesso! ===")
-            print(f"- Relatório Estatístico: {SUMMARY_CSV}")
-            print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")
+    # if export_omnet_results():
+    df_raw, df_summary = process_metrics()
+    if df_raw is not None:
+        generate_plots(df_summary)
+        plot_processing_histograms(df_summary)
+        print("\n=== Etapa 4 Concluída com Sucesso! ===")
+        print(f"- Relatório Estatístico: {SUMMARY_CSV}")
+        print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")

@@ -14,7 +14,9 @@
 #include <string>
 #include <vector>
 
+#include <openssl/ec.h>
 #include <openssl/evp.h>
+#include <openssl/obj_mac.h>
 
 #include "Aes128.h"
 #include "CamFieldCipher.h"
@@ -196,7 +198,14 @@ bool benchmarkFieldCipher(const char* name, int iterations)
 
 bool benchmarkEcdsa(int iterations, size_t signedBytes)
 {
-    EVP_PKEY* key = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
+    // API portável (OpenSSL 1.1.1 e 3.x); EVP_PKEY_Q_keygen só existe a partir da 3.0.
+    EVP_PKEY* key = nullptr;
+    EVP_PKEY_CTX* keygenContext = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr);
+    if (keygenContext && EVP_PKEY_keygen_init(keygenContext) == 1 &&
+        EVP_PKEY_CTX_set_ec_paramgen_curve_nid(keygenContext, NID_X9_62_prime256v1) == 1) {
+        EVP_PKEY_keygen(keygenContext, &key);
+    }
+    EVP_PKEY_CTX_free(keygenContext);
     if (!key) {
         std::fprintf(stderr, "[FAIL] ECDSA P-256 key generation\n");
         return false;
