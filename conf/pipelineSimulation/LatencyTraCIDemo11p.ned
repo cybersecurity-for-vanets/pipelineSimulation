@@ -8,6 +8,8 @@ simple LatencyTraCIDemo11p extends TraCIDemo11p
         @class(pipelineSimulation::LatencyTraCIDemo11p);
         double camMinInterval @unit(s) = default(0.1s);
         double camMaxInterval @unit(s) = default(1s);
+        // Period of the per-vehicle CAM check grid (ETSI T_CheckCamGen); each vehicle gets a random phase within it.
+        double camCheckInterval @unit(s) = default(0.1s);
         double cbrWindow @unit(s) = default(1s);
         double camPositionThreshold @unit(m) = default(4m);
         double camHeadingThresholdDeg = default(4);

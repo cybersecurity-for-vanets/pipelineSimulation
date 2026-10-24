@@ -48,6 +48,7 @@ protected:
     omnetpp::simtime_t camProcessingDeadline;
     // Statistics (scalars and per-message vectors) restart at warmupTime; protocol state is kept.
     omnetpp::simtime_t warmupTime;
+    omnetpp::simtime_t measurementStart; // max(warmupTime, time this vehicle appeared)
     double cpuBusyTimeS = 0;
     double cpuQueueWaitTotalS = 0;
     long cpuQueueSamples = 0;
@@ -106,6 +107,10 @@ protected:
     veins::DemoSafetyMessage* pendingCam = nullptr;
     omnetpp::simtime_t camMinInterval;
     omnetpp::simtime_t camMaxInterval;
+    // CAM generation is decided on a per-vehicle grid (ETSI T_CheckCamGen): camCheckPhase + k * camCheckInterval.
+    // A random phase per vehicle keeps the CAMs of different vehicles from starting at the same instant.
+    omnetpp::simtime_t camCheckInterval;
+    omnetpp::simtime_t camCheckPhase;
     omnetpp::simtime_t cbrWindow;
     omnetpp::simtime_t dccMinInterval;
     omnetpp::simtime_t cryptoTxDelay;
@@ -140,6 +145,7 @@ protected:
 
     bool movementThresholdExceeded() const;
     void scheduleAdaptiveCam();
+    omnetpp::simtime_t nextCheckTime(omnetpp::simtime_t time) const;
     void sendAdaptiveCam();
     void sendPendingCam();
     void processReceivedCam(veins::DemoSafetyMessage* bsm);

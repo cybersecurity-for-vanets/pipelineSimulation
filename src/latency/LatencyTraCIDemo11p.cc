@@ -65,6 +65,12 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
     if (stage == 0) {
         camMinInterval = SimTime(par("camMinInterval").doubleValue());
         camMaxInterval = SimTime(par("camMaxInterval").doubleValue());
+        camCheckInterval = SimTime(par("camCheckInterval").doubleValue());
+        if (camCheckInterval <= SIMTIME_ZERO) {
+            throw cRuntimeError("camCheckInterval must be positive");
+        }
+        // Phase drawn from the module RNG: reproducible per seed, different for every vehicle.
+        camCheckPhase = SimTime::fromRaw(static_cast<int64_t>(uniform(0.0, 1.0) * camCheckInterval.raw()));
         cbrWindow = SimTime(par("cbrWindow").doubleValue());
         camPositionThreshold = par("camPositionThreshold").doubleValue();
         camHeadingThresholdRad = par("camHeadingThresholdDeg").doubleValue() * std::acos(-1.0) / 180.0;
@@ -151,9 +157,12 @@ void pipelineSimulation::LatencyTraCIDemo11p::initialize(int stage)
     }
     else if (stage == 1) {
         channelStateChangedAt = simTime();
-        scheduleAt(simTime(), adaptiveCamEvent);
+        scheduleAt(nextCheckTime(simTime()), adaptiveCamEvent);
         scheduleAt(simTime() + cbrWindow, channelBusyRatioEvent);
-        if (warmupTime > SIMTIME_ZERO) scheduleAt(warmupTime, warmupEvent);
+        // Vehicles are inserted by SUMO during the run: one that appears after the warm-up has no counters to reset
+        // and its measurement window starts when it appears.
+        measurementStart = std::max(warmupTime, simTime());
+        if (warmupTime > simTime()) scheduleAt(warmupTime, warmupEvent);
     }
 }
 
@@ -230,29 +239,35 @@ bool pipelineSimulation::LatencyTraCIDemo11p::movementThresholdExceeded() const
 
 void pipelineSimulation::LatencyTraCIDemo11p::scheduleAdaptiveCam()
 {
-    if (!adaptiveCamEvent || !adaptiveCamEvent->isScheduled()) {
-        simtime_t deadline = simTime();
-        if (hasSentCam) {
-            deadline = lastCamTime + camMaxInterval;
-            if (movementThresholdExceeded()) {
-                deadline = std::min(deadline, lastCamTime + dccMinInterval);
-            }
-            if (deadline < simTime()) deadline = simTime();
+    simtime_t deadline = simTime();
+    if (hasSentCam) {
+        deadline = lastCamTime + camMaxInterval;
+        if (movementThresholdExceeded()) {
+            deadline = std::min(deadline, lastCamTime + dccMinInterval);
         }
+        if (deadline < simTime()) deadline = simTime();
+    }
+    // Generation happens only at this vehicle's check instants, never at the SUMO update instant.
+    deadline = nextCheckTime(deadline);
+
+    if (!adaptiveCamEvent || !adaptiveCamEvent->isScheduled()) {
         scheduleAt(deadline, adaptiveCamEvent);
         return;
     }
-
-    simtime_t deadline = hasSentCam ? lastCamTime + camMaxInterval : simTime();
-    if (hasSentCam && movementThresholdExceeded()) {
-        deadline = std::min(deadline, lastCamTime + dccMinInterval);
-    }
-    if (deadline < simTime()) deadline = simTime();
 
     if (adaptiveCamEvent->getArrivalTime() != deadline) {
         cancelEvent(adaptiveCamEvent);
         scheduleAt(deadline, adaptiveCamEvent);
     }
+}
+
+simtime_t pipelineSimulation::LatencyTraCIDemo11p::nextCheckTime(simtime_t time) const
+{
+    // Smallest instant >= time on the grid camCheckPhase + k * camCheckInterval (computed in integer ticks).
+    const int64_t interval = camCheckInterval.raw();
+    const int64_t offset = time.raw() - camCheckPhase.raw();
+    const int64_t steps = offset >= 0 ? (offset + interval - 1) / interval : -((-offset) / interval);
+    return SimTime::fromRaw(camCheckPhase.raw() + steps * interval);
 }
 
 void pipelineSimulation::LatencyTraCIDemo11p::sendAdaptiveCam()
@@ -280,6 +295,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendPendingCam()
     pdrExpectedReceptions += countPotentialCamReceivers(pdrExpectedByDistance);
     // Sender-side processing (queue wait + service), used to split latency at the receiver.
     cam->addPar("txProcessingS").setDoubleValue((simTime() - cam->getCreationTime()).dbl());
+    const simtime_t generationTime = cam->getCreationTime();
     sendDown(cam);
 
     cryptoTxDelayTotalMs += cryptoTxDelay.dbl() * 1000.0;
@@ -287,7 +303,8 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendPendingCam()
     lastCamPosition = pendingCamPosition;
     lastCamHeadingRad = pendingCamHeadingRad;
     lastCamSpeed = pendingCamSpeed;
-    lastCamTime = simTime();
+    // Generation time, not the end of the crypto operation: keeps the CAM grid aligned after a crypto delay.
+    lastCamTime = generationTime;
     hasSentCam = true;
     scheduleAdaptiveCam();
 }
@@ -413,7 +430,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::finish()
         recordScalar("meanChannelBusyRatio", channelBusyRatioTotal / channelBusyRatioSamples);
     }
     // Length of the measurement window (after warm-up), used to normalise per-second metrics.
-    recordScalar("measurementTimeS", (simTime() - warmupTime).dbl());
+    recordScalar("measurementTimeS", (simTime() - measurementStart).dbl());
     recordScalar("cryptoTxDelayTotalMs", cryptoTxDelayTotalMs);
     recordScalar("cryptoTxOperationCount", cryptoTxOperationCount);
     recordScalar("cryptoRxDelayTotalMs", cryptoRxDelayTotalMs);

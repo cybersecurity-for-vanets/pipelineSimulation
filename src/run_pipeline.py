@@ -31,7 +31,7 @@ def main():
     print("==================================================")
 
     # Etapa 1: Dados históricos, calibração de Krauss e rotas SUMO
-    run_step("Etapa 1.1 - Redes OSM e Traffic Stats TomTom", "fetch_data.py")
+    # run_step("Etapa 1.1 - Redes OSM e Traffic Stats TomTom", "fetch_data.py")
     run_step("Etapa 1.2 - Microcalibração Krauss por topologia", "calibrate_stage1.py")
     run_step("Etapa 1.3 - Geração das rotas SUMO calibradas", "generate_routes.py")
 
@@ -42,7 +42,8 @@ def main():
     run_step("Etapa 2 - Configurações OMNeT++", "generate_stage2_configs.py")
 
     # Etapa 3: Execução Paralela no Apple M1 (36 configs x 30 seeds)
-    run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3.py")
+    # run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3.py")
+    run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3_baseline.py")
 
     # # Etapa 4: Extração com opp_scavetool e Geração de Gráficos
     run_step("Etapa 4 - Análise Estatística e Plotagem", "analyze_stage4_results.py")

@@ -43,7 +43,7 @@ def export_message_vectors():
         return False
 
     # Filtro por nome: só os vetores de mensagem, para não ler os demais vetores do OMNeT++.
-    name_filter = " OR ".join(f"name({name})" for name in MESSAGE_VECTORS)
+    name_filter = " OR ".join(f"name =~ {name}" for name in MESSAGE_VECTORS)
     cmd = [SCAVETOOL_BIN, "x", *vec_files, "-f", name_filter, "-o", VECTOR_CSV, "-F", "CSV-R"]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
