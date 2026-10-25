@@ -2,7 +2,7 @@
     "scenarios": {
         "highway": {
             "downtown": {
-                "start_coordinates": [-23.652861, -46.721583],
+                "start_coordinates": [-23.652265, -46.722180],
                 "end_coordinates": [-23.643552, -46.725266]
             },
             "neighborhood": {
