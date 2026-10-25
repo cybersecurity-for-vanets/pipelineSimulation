@@ -17,6 +17,7 @@ try:
         normalize_multiday_analysis,
         normalize_route_analysis,
         open_download_route_analysis,
+        wait_for_route_analysis,
     )
     from .sumo_route_utils import _shape_points, build_topology_edge_routes
 except ImportError:
@@ -27,6 +28,7 @@ except ImportError:
         normalize_multiday_analysis,
         normalize_route_analysis,
         open_download_route_analysis,
+        wait_for_route_analysis,
     )
     from sumo_route_utils import _shape_points, build_topology_edge_routes
 
@@ -171,11 +173,22 @@ def print_multiday_dry_run(payloads):
         print(f"[DRY RUN] {route['name']}")
 
 
+def recover_route_analysis(job_id):
+    """Baixa o resultado de um job já criado na TomTom e grava o bruto, sem criar outro job."""
+    print(f"Recuperando job {job_id} já criado na TomTom")
+    result = wait_for_route_analysis(job_id)
+    raw_file = save_raw_job(job_id, result)
+    return {"job_id": job_id, "raw_file": raw_file, "result": result}
+
+
 def run_multiday(args, routes_config, tomtom_config):
     """Coleta a janela inteira e grava tomtom_multiday.json.
 
     Não baixa o OSM, não roda netconvert e não altera tomtom_calibrated_rates.json: rodar a rede de novo
     pode mudar o OSM e invalidar os tls_offsets e as calibrações de fluxo e Krauss.
+
+    Com --job-id, os primeiros payloads são recuperados dos jobs informados (na ordem da janela) e só os
+    restantes são criados. Assim, um job que caiu no meio não é refeito.
     """
     print("=== Etapa 1.1 (multi-dia): TomTom Traffic Stats para a janela de tomtom.json ===")
     if args.dry_run:
@@ -190,7 +203,11 @@ def run_multiday(args, routes_config, tomtom_config):
             jobs.append({"job_id": job_id, "raw_file": Path(file_name).name, "result": result})
     else:
         # Cada job é salvo antes do próximo; se um falhar, os anteriores podem ser reabertos com -f.
-        for payload in build_multiday_payloads(routes_config, tomtom_config):
+        recovered_ids = args.job_id or []
+        for index, payload in enumerate(build_multiday_payloads(routes_config, tomtom_config)):
+            if index < len(recovered_ids):
+                jobs.append(recover_route_analysis(recovered_ids[index]))
+                continue
             job_id, result = create_and_wait_for_route_analysis(routes_config, tomtom_config, payload=payload)
             raw_file = save_raw_job(job_id, result)
             jobs.append({"job_id": job_id, "raw_file": raw_file, "result": result})
@@ -215,12 +232,22 @@ def main():
     parser.add_argument("--multi-day", action="store_true",
                         help="Collect every date in tomtom.json's window and write conf/tomtom_multiday.json")
     parser.add_argument("-f", "--file", nargs="+", help="Raw result file(s) in conf/ to open instead of calling the API")
+    parser.add_argument("--job-id", nargs="+",
+                        help="Jobs já criados na TomTom para recuperar, na ordem da janela (só com --multi-day). "
+                             "Os payloads sem jobId são criados normalmente")
     args = parser.parse_args()
+
+    if args.job_id and not args.multi_day:
+        parser.error("--job-id só funciona com --multi-day")
+    if args.job_id and args.file:
+        parser.error("--job-id e -f não podem ser usados juntos")
 
     tomtom_config = load_json(TOMTOM_CONF_PATH)
     routes_config = load_json(ROUTES_CONF_PATH)
 
     if args.multi_day:
+        if args.job_id and len(args.job_id) > len(build_multiday_payloads(routes_config, tomtom_config)):
+            parser.error("Há mais --job-id do que jobs na janela")
         run_multiday(args, routes_config, tomtom_config)
         return
     if args.file and len(args.file) > 1:

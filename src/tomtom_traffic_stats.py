@@ -474,6 +474,26 @@ def create_and_wait_for_route_analysis(
     if not job_id:
         raise RuntimeError("TomTom accepted no jobId in the route analysis response")
 
+    return job_id, wait_for_route_analysis(
+        job_id,
+        poll_interval_seconds=poll_interval_seconds,
+        max_wait_seconds=max_wait_seconds,
+        timeout_seconds=timeout_seconds,
+        session=session,
+    )
+
+
+def wait_for_route_analysis(
+    job_id,
+    poll_interval_seconds=15,
+    max_wait_seconds=24 * 60 * 60,
+    timeout_seconds=60,
+    session=None,
+):
+    """Consulta um job já criado na TomTom até ele terminar e devolve o JSON bruto. Não cria nada."""
+    session = session or requests.Session()
+    api_key = load_api_key()
+
     deadline = time.monotonic() + max_wait_seconds
     while time.monotonic() < deadline:
         try:
@@ -494,7 +514,7 @@ def create_and_wait_for_route_analysis(
             result_url = next((item for item in urls if ".json" in item.lower()), None)
             if not result_url:
                 raise RuntimeError("TomTom completed the job but returned no JSON result URL")
-            return job_id, _download_json_result(result_url, session, timeout_seconds)
+            return _download_json_result(result_url, session, timeout_seconds)
         if state in {"ERROR", "REJECTED", "CANCELLED", "EXPIRED"}:
             messages = "; ".join(status.get("messages", []))
             raise RuntimeError(f"TomTom route analysis ended in state {state}: {messages}")
