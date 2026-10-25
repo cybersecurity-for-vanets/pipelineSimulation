@@ -127,6 +127,11 @@ def validate_calibration_params(params):
             or not all(_is_integer(cut) and 0 <= cut < params["simulation"]["seconds"] for cut in cutoffs):
         raise CalibrationParamsError("checks.cutoffs_s deve ser lista sem repetição de inteiros entre 0 e simulation.seconds")
 
+    fraction = _field(params, "validation.fraction")
+    if not _is_number(fraction) or not 0 < fraction < 1:
+        raise CalibrationParamsError("validation.fraction deve ficar entre 0 e 1")
+    _check_integer(_field(params, "validation.seed"), "validation.seed", minimum=0)
+
     segment_sample = _field(params, "segments.min_normalized_sample_size")
     if not _is_number(segment_sample) or not 0 <= segment_sample <= 1:
         raise CalibrationParamsError("segments.min_normalized_sample_size deve ficar entre 0 e 1")

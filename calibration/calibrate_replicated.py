@@ -147,8 +147,9 @@ def bisect_replicated(route_name, route, target_kmh, field, search_interval, fix
     }
 
 
-def calibrate_route(route_name, route, regime_name, regime_target, calibration_data, params):
-    krauss = params["krauss"]["default"]
+def calibrate_route(route_name, route, regime_name, regime_target, calibration_data, params, krauss=None):
+    """krauss: perfil do Krauss (pode trazer speedDev); padrão krauss.default."""
+    krauss = krauss or params["krauss"]["default"]
     lanes = bottleneck_lanes(route["topology"], route["sumo_edges"])
     target_kmh = regime_target["target_kmh"]
     if route["topology"] in params["topologies"]["speed_factor"]:

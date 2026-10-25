@@ -115,12 +115,16 @@ def build_regime_target(route_days, hours, days_used, min_sample, aggregate):
     }
 
 
-def build_targets(multiday, params):
+def build_targets(multiday, params, days=None):
+    """Alvos por rota e regime; days restringe as datas (subconjunto de calibração ou validação da T4)."""
     target_params = params["target"]
     aggregate = AGGREGATORS[target_params["aggregation"]]
     min_sample = target_params["min_normalized_sample_size"]
     regimes = {name: regime["hours"] for name, regime in target_params["regimes"].items()}
     days_used, days_excluded = select_days(multiday, params)
+    if days is not None:
+        days_excluded.update({day: "fora do subconjunto pedido" for day in days_used if day not in days})
+        days_used = [day for day in days_used if day in days]
     if not days_used:
         raise ValueError("Nenhuma data sobrou depois de tomtom.days_of_week e tomtom.exclude_dates")
 
