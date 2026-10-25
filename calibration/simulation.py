@@ -56,8 +56,12 @@ def read_trip_metrics(tripinfo_path, route_names, min_depart=0.0):
     return metrics
 
 
-def simulate(topology, routes, krauss, route_flows, seconds, min_depart=0.0, seed=1):
-    """Uma simulação; devolve (métricas por rota de read_trip_metrics, estatísticas de inserção)."""
+def run_sumo(topology, routes, krauss, route_flows, seconds, seed, read_outputs, extra_args=()):
+    """Uma simulação; read_outputs(pasta) lê as saídas antes de a pasta temporária ser apagada.
+
+    A pasta tem tripinfo.xml e statistics.xml; extra_args pode pedir outras saídas dentro dela, com caminhos
+    relativos a ela (o SUMO roda com cwd na pasta temporária).
+    """
     if not SUMO_BINARY:
         raise FileNotFoundError("Binário do SUMO não encontrado; defina SUMO_BINARY ou coloque sumo no PATH")
 
@@ -81,11 +85,21 @@ def simulate(topology, routes, krauss, route_flows, seconds, min_depart=0.0, see
             "--seed", str(seed),
             "--no-step-log", "true",
             "--duration-log.disable", "true",
+            *extra_args,
         ]
         if tls_offsets_path(topology).is_file():
             command += ["--additional-files", str(tls_offsets_path(topology))]
-        result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_DIR)
+        result = subprocess.run(command, capture_output=True, text=True, cwd=tmp_path)
         if result.returncode != 0:
             raise RuntimeError(f"SUMO falhou na topologia {topology}: {result.stderr.strip()}")
+        return read_outputs(tmp_path)
 
-        return read_trip_metrics(tripinfo_file, list(routes), min_depart), read_insertion_stats(tripinfo_file, statistic_file)
+
+def simulate(topology, routes, krauss, route_flows, seconds, min_depart=0.0, seed=1):
+    """Uma simulação; devolve (métricas por rota de read_trip_metrics, estatísticas de inserção)."""
+    def read_outputs(tmp_path):
+        tripinfo_file = tmp_path / "tripinfo.xml"
+        return (read_trip_metrics(tripinfo_file, list(routes), min_depart),
+                read_insertion_stats(tripinfo_file, tmp_path / "statistics.xml"))
+
+    return run_sumo(topology, routes, krauss, route_flows, seconds, seed, read_outputs)

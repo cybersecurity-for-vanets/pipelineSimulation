@@ -14,6 +14,7 @@ WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 KRAUSS_KEYS = ("accel", "decel", "tau", "sigma", "minGap")
 AGGREGATIONS = ("arithmetic", "harmonic", "median")
 SENSITIVITY_METHODS = ("morris",)
+DISPERSION_METRICS = ("travel_time_cv", "travel_time_p95_median")
 
 
 class CalibrationParamsError(ValueError):
@@ -125,6 +126,20 @@ def validate_calibration_params(params):
     if not _is_list(cutoffs) or not cutoffs or len(set(cutoffs)) != len(cutoffs) \
             or not all(_is_integer(cut) and 0 <= cut < params["simulation"]["seconds"] for cut in cutoffs):
         raise CalibrationParamsError("checks.cutoffs_s deve ser lista sem repetição de inteiros entre 0 e simulation.seconds")
+
+    segment_sample = _field(params, "segments.min_normalized_sample_size")
+    if not _is_number(segment_sample) or not 0 <= segment_sample <= 1:
+        raise CalibrationParamsError("segments.min_normalized_sample_size deve ficar entre 0 e 1")
+    _check_integer(_field(params, "segments.min_valid_cells"), "segments.min_valid_cells", minimum=1)
+    segment_seeds = _field(params, "segments.seeds")
+    if not _is_list(segment_seeds) or not segment_seeds or len(set(segment_seeds)) != len(segment_seeds) \
+            or not all(_is_integer(seed) for seed in segment_seeds):
+        raise CalibrationParamsError("segments.seeds deve ser lista não vazia de inteiros sem repetição")
+    _check_number(_field(params, "segments.fcd_period_s"), "segments.fcd_period_s", minimum_exclusive=0)
+    _check_number(_field(params, "segments.max_projection_distance_m"), "segments.max_projection_distance_m",
+                  minimum_exclusive=0)
+    if _field(params, "dispersion.metric") not in DISPERSION_METRICS:
+        raise CalibrationParamsError(f"dispersion.metric deve ser um de {DISPERSION_METRICS}")
 
     regimes = _field(params, "target.regimes")
     if not isinstance(regimes, dict) or not regimes:
