@@ -131,7 +131,8 @@ def convert_osm_to_net(topology, osm_path):
         "--roundabouts.guess", "true",
         "--ramps.guess", "true",
         "--junctions.join", "true",
-        "--tls.guess", "true",
+        # Only OSM-mapped traffic signals: --tls.guess added uncoordinated 90 s signals
+        # that made free-flow speed slower than TomTom on several routes.
     ]
     result = subprocess.run(command, capture_output=True, text=True, cwd=BASE_DIR)
     if result.returncode != 0:

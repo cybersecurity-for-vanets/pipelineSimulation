@@ -10,6 +10,10 @@ OSM_DIR = BASE_DIR / "osmFiles"
 TRAFFIC_DIR = BASE_DIR / "trafficXmlFiles"
 CALIBRATION_DATA_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
 KRAUSS_CALIBRATION_PATH = CONF_DIR / "krauss_calibration.json"
+ROUTE_FLOWS_PATH = CONF_DIR / "route_flows_calibrated.json"
+# Experiment flow levels as multiples of the calibrated route flow; medium_flow reproduces TomTom.
+# The level names come from hcm_flow_rates_veh_per_hour_per_lane, which stage 2 also reads.
+FLOW_LEVEL_FACTORS = {"low_flow": 0.5, "medium_flow": 1.0, "high_flow": 1.5}
 TOPOLOGY_FILE_NAMES = {"urban_road": "urbanRoad"}
 DEFAULT_KRAUSS = {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5}
 ROUTE_END_SECONDS = 3600
@@ -19,6 +23,11 @@ SUMO_STEP_LENGTH = 0.1
 
 def safe_id(value):
     return re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
+
+
+def tls_offsets_path(topology):
+    """Coordinated traffic light programs written by calibrate_stage1.py, if the topology uses them."""
+    return OSM_DIR / f"{TOPOLOGY_FILE_NAMES.get(topology, topology)}.tls_offsets.add.xml"
 
 
 def load_json(path, required=True):
@@ -55,8 +64,8 @@ def build_route_file(topology, routes, flow_rate, krauss, route_flows=None):
             "decel": str(krauss["decel"]),
             "tau": str(krauss["tau"]),
             "sigma": str(krauss["sigma"]),
-            "speedFactor": "1",
-            "speedDev": "0.1",
+            "speedFactor": str(krauss.get("speedFactor", 1)),
+            "speedDev": str(krauss.get("speedDev", 0.1)),
         })
         ET.SubElement(root, "route", {"id": route_id, "edges": " ".join(edges)})
         ET.SubElement(root, "flow", {
@@ -78,6 +87,9 @@ def build_sumocfg(topology, route_path, net_path):
     inputs = ET.SubElement(root, "input")
     ET.SubElement(inputs, "net-file", {"value": str(net_path.resolve())})
     ET.SubElement(inputs, "route-files", {"value": str(route_path.resolve())})
+    # veins_launchd copies only the .sumocfg, so the absolute path keeps the offsets reachable.
+    if tls_offsets_path(topology).is_file():
+        ET.SubElement(inputs, "additional-files", {"value": str(tls_offsets_path(topology).resolve())})
     time = ET.SubElement(root, "time")
     ET.SubElement(time, "begin", {"value": "0"})
     ET.SubElement(time, "end", {"value": str(ROUTE_END_SECONDS)})
@@ -96,6 +108,18 @@ def generate_sumo_files():
     hcm_rates = calibration_data.get("hcm_flow_rates_veh_per_hour_per_lane")
     if not hcm_rates:
         raise ValueError("Traffic Stats data is missing HCM flow rates")
+    missing_factors = set(hcm_rates) - set(FLOW_LEVEL_FACTORS)
+    if missing_factors:
+        raise ValueError(f"No FLOW_LEVEL_FACTORS entry for flow levels: {sorted(missing_factors)}")
+
+    calibrated_flows = load_json(ROUTE_FLOWS_PATH)["routes"]
+    missing_routes = set(routes) - set(calibrated_flows)
+    if missing_routes:
+        raise ValueError(f"No calibrated flow for routes {sorted(missing_routes)}; run calibrate_stage1.py")
+    for name, flow in sorted(calibrated_flows.items()):
+        if flow["method"] == "tomtom_speed" and not flow["reachable"]:
+            print(f"[AVISO] {name}: fluxo não reproduz a TomTom ({flow['stop_reason']}, "
+                  f"{flow['simulated_kmh']:.1f} vs {flow['target_kmh']:.1f} km/h); usando {flow['flow_veh_h']} veh/h")
 
     TRAFFIC_DIR.mkdir(parents=True, exist_ok=True)
     topologies = sorted({route.get("topology") for route in routes.values()})
@@ -118,11 +142,16 @@ def generate_sumo_files():
             prefix = f"{file_topology}_{flow_name}"
             route_path = TRAFFIC_DIR / f"{prefix}.rou.xml"
             sumocfg_path = TRAFFIC_DIR / f"{prefix}.sumocfg"
-            route_xml = build_route_file(topology, topology_routes, flow_rate, krauss)
+            route_flows = {
+                name: round(calibrated_flows[name]["flow_veh_h"] * FLOW_LEVEL_FACTORS[flow_name])
+                for name in topology_routes
+            }
+            route_xml = build_route_file(topology, topology_routes, flow_rate, krauss, route_flows)
             route_path.write_text(route_xml, encoding="utf-8")
             sumocfg_xml = build_sumocfg(topology, route_path, net_path)
             sumocfg_path.write_text(sumocfg_xml, encoding="utf-8")
-            print(f"[OK] {prefix}: {len(topology_routes)} TomTom routes")
+            print(f"[OK] {prefix}: {len(topology_routes)} TomTom routes, "
+                  f"{FLOW_LEVEL_FACTORS[flow_name]}x fluxo calibrado ({sum(route_flows.values())} veh/h)")
 
 
 if __name__ == "__main__":
