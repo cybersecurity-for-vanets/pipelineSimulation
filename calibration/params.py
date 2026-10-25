@@ -61,6 +61,17 @@ def validate_calibration_params(params):
         raise CalibrationParamsError("flow.stability_seeds deve ser lista não vazia de inteiros")
 
     _check_integer(_field(params, "simulation.seconds"), "simulation.seconds", minimum=1)
+    _check_integer(_field(params, "simulation.warmup_s"), "simulation.warmup_s", minimum=0)
+    if params["simulation"]["warmup_s"] >= params["simulation"]["seconds"]:
+        raise CalibrationParamsError("simulation.warmup_s deve ser menor que simulation.seconds")
+    error = _field(params, "checks.max_length_ratio_error")
+    if not _is_number(error) or not 0 < error < 1:
+        raise CalibrationParamsError("checks.max_length_ratio_error deve ficar entre 0 e 1")
+    _check_integer(_field(params, "checks.window_s"), "checks.window_s", minimum=1)
+    cutoffs = _field(params, "checks.cutoffs_s")
+    if not _is_list(cutoffs) or not cutoffs or len(set(cutoffs)) != len(cutoffs) \
+            or not all(_is_integer(cut) and 0 <= cut < params["simulation"]["seconds"] for cut in cutoffs):
+        raise CalibrationParamsError("checks.cutoffs_s deve ser lista sem repetição de inteiros entre 0 e simulation.seconds")
 
     regimes = _field(params, "target.regimes")
     if not isinstance(regimes, dict) or not regimes:

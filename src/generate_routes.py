@@ -30,6 +30,16 @@ def tls_offsets_path(topology):
     return OSM_DIR / f"{TOPOLOGY_FILE_NAMES.get(topology, topology)}.tls_offsets.add.xml"
 
 
+def apply_route_speed_factors(routes, route_flow_data):
+    """Copies of the routes carrying their calibrated speedFactor (route_flows_calibrated.json), if any."""
+    calibrated = route_flow_data["routes"]
+    return {
+        name: {**route, "speed_factor": calibrated[name]["speed_factor"]}
+        if "speed_factor" in calibrated.get(name, {}) else route
+        for name, route in routes.items()
+    }
+
+
 def load_json(path, required=True):
     if not path.is_file():
         if required:
@@ -64,7 +74,7 @@ def build_route_file(topology, routes, flow_rate, krauss, route_flows=None):
             "decel": str(krauss["decel"]),
             "tau": str(krauss["tau"]),
             "sigma": str(krauss["sigma"]),
-            "speedFactor": str(krauss.get("speedFactor", 1)),
+            "speedFactor": str(route_data.get("speed_factor", krauss.get("speedFactor", 1))),
             "speedDev": str(krauss.get("speedDev", 0.1)),
         })
         ET.SubElement(root, "route", {"id": route_id, "edges": " ".join(edges)})
@@ -112,14 +122,16 @@ def generate_sumo_files():
     if missing_factors:
         raise ValueError(f"No FLOW_LEVEL_FACTORS entry for flow levels: {sorted(missing_factors)}")
 
-    calibrated_flows = load_json(ROUTE_FLOWS_PATH)["routes"]
+    route_flow_data = load_json(ROUTE_FLOWS_PATH)
+    calibrated_flows = route_flow_data["routes"]
     missing_routes = set(routes) - set(calibrated_flows)
     if missing_routes:
         raise ValueError(f"No calibrated flow for routes {sorted(missing_routes)}; run calibrate_stage1.py")
     for name, flow in sorted(calibrated_flows.items()):
-        if flow["method"] == "tomtom_speed" and not flow["reachable"]:
-            print(f"[AVISO] {name}: fluxo não reproduz a TomTom ({flow['stop_reason']}, "
+        if not flow["reachable"]:
+            print(f"[AVISO] {name}: calibração não reproduz a TomTom ({flow['stop_reason']}, "
                   f"{flow['simulated_kmh']:.1f} vs {flow['target_kmh']:.1f} km/h); usando {flow['flow_veh_h']} veh/h")
+    routes = apply_route_speed_factors(routes, route_flow_data)
 
     TRAFFIC_DIR.mkdir(parents=True, exist_ok=True)
     topologies = sorted({route.get("topology") for route in routes.values()})

@@ -11,14 +11,20 @@ import requests
 
 try:
     from .tomtom_traffic_stats import (
+        build_multiday_payloads,
+        build_route_analysis_payload,
         create_and_wait_for_route_analysis,
+        normalize_multiday_analysis,
         normalize_route_analysis,
         open_download_route_analysis,
     )
     from .sumo_route_utils import _shape_points, build_topology_edge_routes
 except ImportError:
     from tomtom_traffic_stats import (
+        build_multiday_payloads,
+        build_route_analysis_payload,
         create_and_wait_for_route_analysis,
+        normalize_multiday_analysis,
         normalize_route_analysis,
         open_download_route_analysis,
     )
@@ -32,6 +38,7 @@ TOMTOM_CONF_PATH = CONF_DIR / "tomtom.json"
 ROUTES_CONF_PATH = CONF_DIR / "routes.json"
 SCENARIOS_CONF_PATH = CONF_DIR / "coordinates_scenaries.json"
 OUTPUT_CALIBRATION_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
+MULTIDAY_OUTPUT_PATH = CONF_DIR / "tomtom_multiday.json"
 MAP_MARGIN_KM = 2.0
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
@@ -141,20 +148,85 @@ def convert_osm_to_net(topology, osm_path):
     return net_path
 
 
+def save_raw_job(job_id, result):
+    """Grava o bruto como conf/jobs_<jobId>_results_<jobName>.json, o mesmo padrão dos arquivos baixados à mão."""
+    job_name = str(result.get("jobName", "krauss")).replace(".", "_")
+    file_name = f"jobs_{job_id}_results_{job_name}.json"
+    path = CONF_DIR / file_name
+    path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    print(f"[OK] Bruto do job {job_id} salvo em {path}")
+    return file_name
+
+
+def print_multiday_dry_run(payloads):
+    dates_by_job = [[item["from"] for item in payload["dateRanges"]] for payload in payloads]
+    total_dates = sum(len(job_dates) for job_dates in dates_by_job)
+    print(f"[DRY RUN] Janela: {dates_by_job[0][0]} a {dates_by_job[-1][-1]} ({total_dates} datas)")
+    print(f"[DRY RUN] Jobs: {len(payloads)}")
+    for index, job_dates in enumerate(dates_by_job, start=1):
+        print(f"[DRY RUN] Job {index}: {len(job_dates)} datas ({job_dates[0]} a {job_dates[-1]})")
+    print(f"[DRY RUN] Rotas: {len(payloads[0]['routes'])}")
+    print(f"[DRY RUN] Faixas horárias: {len(payloads[0]['timeSets'])}")
+    for route in payloads[0]["routes"]:
+        print(f"[DRY RUN] {route['name']}")
+
+
+def run_multiday(args, routes_config, tomtom_config):
+    """Coleta a janela inteira e grava tomtom_multiday.json.
+
+    Não baixa o OSM, não roda netconvert e não altera tomtom_calibrated_rates.json: rodar a rede de novo
+    pode mudar o OSM e invalidar os tls_offsets e as calibrações de fluxo e Krauss.
+    """
+    print("=== Etapa 1.1 (multi-dia): TomTom Traffic Stats para a janela de tomtom.json ===")
+    if args.dry_run:
+        print_multiday_dry_run(build_multiday_payloads(routes_config, tomtom_config))
+        return
+
+    jobs = []
+    if args.file:
+        for file_name in args.file:
+            print(f"Abrindo bruto: {file_name}")
+            job_id, result = open_download_route_analysis(f"{CONF_DIR}/{file_name}")
+            jobs.append({"job_id": job_id, "raw_file": Path(file_name).name, "result": result})
+    else:
+        # Cada job é salvo antes do próximo; se um falhar, os anteriores podem ser reabertos com -f.
+        for payload in build_multiday_payloads(routes_config, tomtom_config):
+            job_id, result = create_and_wait_for_route_analysis(routes_config, tomtom_config, payload=payload)
+            raw_file = save_raw_job(job_id, result)
+            jobs.append({"job_id": job_id, "raw_file": raw_file, "result": result})
+
+    data = normalize_multiday_analysis(
+        jobs,
+        routes_config,
+        tomtom_config.get("time_zone", "America/Sao_Paulo"),
+    )
+    with MULTIDAY_OUTPUT_PATH.open("w", encoding="utf-8") as output:
+        json.dump(data, output, indent=2, ensure_ascii=False)
+    print(f"[OK] Dados multi-dia salvos em {MULTIDAY_OUTPUT_PATH}")
+    print(
+        f"[INFO] Jobs: {', '.join(job['job_id'] for job in jobs)}; "
+        f"datas: {data['date_from']} a {data['date_to']}; rotas: {len(data['routes'])}"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch one historical TomTom Traffic Stats day for the target routes")
     parser.add_argument("--dry-run", action="store_true", help="Print the request summary without network calls")
-    parser.add_argument('-f', '--file', help='Path to the input file')
+    parser.add_argument("--multi-day", action="store_true",
+                        help="Collect every date in tomtom.json's window and write conf/tomtom_multiday.json")
+    parser.add_argument("-f", "--file", nargs="+", help="Raw result file(s) in conf/ to open instead of calling the API")
     args = parser.parse_args()
 
     tomtom_config = load_json(TOMTOM_CONF_PATH)
     routes_config = load_json(ROUTES_CONF_PATH)
 
+    if args.multi_day:
+        run_multiday(args, routes_config, tomtom_config)
+        return
+    if args.file and len(args.file) > 1:
+        parser.error("Vários arquivos em -f só funcionam com --multi-day")
+
     if args.dry_run:
-        try:
-            from .tomtom_traffic_stats import build_route_analysis_payload
-        except ImportError:
-            from tomtom_traffic_stats import build_route_analysis_payload
         payload = build_route_analysis_payload(routes_config, tomtom_config)
         print(f"[DRY RUN] Date: {payload['dateRanges'][0]['from']}")
         print(f"[DRY RUN] Time zone: {payload['routes'][0]['zoneId']}")
@@ -165,14 +237,14 @@ def main():
         return
 
     print("=== Stage 1.1: TomTom Traffic Stats for target routes ===")
-    if args.file == None:
+    if args.file is None:
         job_id, route_analysis = create_and_wait_for_route_analysis(
             routes_config,
             tomtom_config,
         )
     else:
-        print(f"Open JSON file: {args.file}")
-        job_id, route_analysis = open_download_route_analysis(f"{CONF_DIR}/{args.file}")
+        print(f"Open JSON file: {args.file[0]}")
+        job_id, route_analysis = open_download_route_analysis(f"{CONF_DIR}/{args.file[0]}")
 
     selected_date = tomtom_config["date_range"]["24h_data"]
     calibration_data = normalize_route_analysis(

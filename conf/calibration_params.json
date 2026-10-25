@@ -18,7 +18,13 @@
     "stability_seeds": [1, 2, 3]
   },
   "simulation": {
-    "seconds": 3600
+    "seconds": 3600,
+    "warmup_s": 600
+  },
+  "checks": {
+    "max_length_ratio_error": 0.05,
+    "window_s": 600,
+    "cutoffs_s": [0, 600, 1200, 1800]
   },
   "target": {
     "regimes": {

@@ -15,10 +15,14 @@ from pathlib import Path
 import optuna
 
 try:
-    from .generate_routes import DEFAULT_KRAUSS, SUMO_STEP_LENGTH, build_route_file, safe_id, tls_offsets_path
+    from .generate_routes import (
+        DEFAULT_KRAUSS, SUMO_STEP_LENGTH, apply_route_speed_factors, build_route_file, safe_id, tls_offsets_path,
+    )
     from .sumo_route_utils import network_path
 except ImportError:
-    from generate_routes import DEFAULT_KRAUSS, SUMO_STEP_LENGTH, build_route_file, safe_id, tls_offsets_path
+    from generate_routes import (
+        DEFAULT_KRAUSS, SUMO_STEP_LENGTH, apply_route_speed_factors, build_route_file, safe_id, tls_offsets_path,
+    )
     from sumo_route_utils import network_path
 
 
@@ -31,9 +35,11 @@ ROUTE_FLOWS_OUTPUT_PATH = CONF_DIR / "route_flows_calibrated.json"
 # Signalized topologies: traffic light offsets coordinated along the TomTom routes (green wave),
 # then the route flow is calibrated to the TomTom speed (option A).
 SIGNAL_COORDINATED_TOPOLOGIES = ("urban_road", "intersection")
-# Topologies whose free-flow speed is above TomTom: flow fixed at the HCM calibration flow and
-# speedFactor/speedDev added to the Krauss search (option B). See docs/calibracao_etapa1.md.
+# Topologies where no flow reproduces TomTom: flow fixed at the HCM calibration flow and one
+# speedFactor per route found by bisection (option B). See docs/calibracao_etapa1.md.
 SPEED_FACTOR_TOPOLOGIES = ("highway",)
+# Above 1 has no effect: the vType maxSpeed is the speed limit and SUMO caps the desired speed there.
+SPEED_FACTOR_INTERVAL = (0.5, 1.0)
 # Concurrent SUMO processes.
 MAX_WORKERS = 6
 # Krauss studies run per topology in parallel, each with this many concurrent trials.
@@ -231,71 +237,87 @@ def coordinate_traffic_lights(calibration_data):
         print(f"[SEMÁFOROS] {topology}: offsets coordenados salvos em {offsets_path}")
 
 
-def calibrate_route_flow(route_name, route, target_speed, krauss_params):
-    """Total route flow (veh/h) whose simulated speed matches the TomTom 24 h mean speed.
+def bisect_route_speed(route_name, route, target_speed, krauss_params, flow, search_interval, field):
+    """Value of one route parameter whose simulated speed matches the TomTom 24 h mean speed.
 
-    Speed decreases with flow, so the target is first bracketed by the interval ends and
-    then bisected in log scale. A target outside the bracket is reported as unreachable.
+    field is "flow_veh_h" (speed decreases with it; bisected in log scale) or "speed_factor"
+    (speed increases with it; bisected linearly, at the fixed flow). The target is first
+    bracketed by the interval ends; a target outside the bracket is reported as unreachable.
     """
     topology = route["topology"]
-    lanes = bottleneck_lanes(topology, route["sumo_edges"])
+    by_flow = field == "flow_veh_h"
     evaluations = {}
 
-    def evaluate(flow):
-        speeds, stats = run_sumo(
-            topology, {route_name: route}, 0, krauss_params, [route_name],
-            route_flows={route_name: flow}, with_stats=True,
+    def simulate(value, seed=1, with_stats=False):
+        trial_route = route if by_flow else {**route, "speed_factor": value}
+        return run_sumo(
+            topology, {route_name: trial_route}, 0, krauss_params, [route_name],
+            route_flows={route_name: value if by_flow else flow}, seed=seed, with_stats=with_stats,
         )
-        evaluations[flow] = (speeds.get(route_name, 0.0), stats)
-        return evaluations[flow][0]
 
-    search_interval = [FLOW_MIN_VEH_H, FLOW_MAX_VEH_H_PER_LANE * lanes]
+    def evaluate(value):
+        speeds, stats = simulate(value, with_stats=True)
+        evaluations[value] = (speeds.get(route_name, 0.0), stats)
+        return evaluations[value][0]
+
     low, high = search_interval
     low_speed, high_speed = evaluate(low), evaluate(high)
+    slowest, fastest = (high_speed, low_speed) if by_flow else (low_speed, high_speed)
     tolerance = FLOW_TOLERANCE_KMH / 3.6
 
-    if target_speed >= low_speed:
-        reason = "free_flow_slower_than_target"
-    elif target_speed <= high_speed:
-        reason = "target_below_speed_at_max_flow"
+    if target_speed >= fastest:
+        reason = "target_faster_than_interval"
+    elif target_speed <= slowest:
+        reason = "target_slower_than_interval"
     else:
         reason = "iteration_budget"
-        while len(evaluations) < FLOW_MAX_ITERATIONS and high - low > 10:
-            middle = round(math.sqrt(low * high))
+        while len(evaluations) < FLOW_MAX_ITERATIONS and (high - low > 10 if by_flow else high - low > 0.005):
+            middle = round(math.sqrt(low * high)) if by_flow else round((low + high) / 2, 4)
             speed = evaluate(middle)
             if abs(speed - target_speed) <= tolerance:
                 reason = "converged"
                 break
-            if speed > target_speed:
+            # Move the bound on the side where the speed is still too high.
+            if (speed > target_speed) == by_flow:
                 low = middle
             else:
                 high = middle
 
-    best_flow = min(evaluations, key=lambda flow: abs(evaluations[flow][0] - target_speed))
-    best_speed, best_stats = evaluations[best_flow]
+    best = min(evaluations, key=lambda value: abs(evaluations[value][0] - target_speed))
+    best_speed, best_stats = evaluations[best]
     seed_speeds = [best_speed] + [
-        run_sumo(topology, {route_name: route}, 0, krauss_params, [route_name],
-                 route_flows={route_name: best_flow}, seed=seed).get(route_name, 0.0)
-        for seed in STABILITY_SEEDS[1:]
+        simulate(best, seed=seed).get(route_name, 0.0) for seed in STABILITY_SEEDS[1:]
     ]
 
     return {
-        "method": "tomtom_speed",
-        "flow_veh_h": best_flow,
+        field: best,
         "target_kmh": target_speed * 3.6,
         "simulated_kmh": best_speed * 3.6,
         "error_kmh": (best_speed - target_speed) * 3.6,
         "reachable": reason in ("converged", "iteration_budget"),
         "stop_reason": reason,
         "trials": len(evaluations),
-        "search_interval_veh_h": search_interval,
-        "bottleneck_lanes": lanes,
-        "speed_at_min_flow_kmh": low_speed * 3.6,
-        "speed_at_max_flow_kmh": high_speed * 3.6,
+        "search_interval": list(search_interval),
+        "speed_at_interval_ends_kmh": [low_speed * 3.6, high_speed * 3.6],
         "insertion": best_stats,
         "seed_speeds_kmh": [speed * 3.6 for speed in seed_speeds],
         "seed_stdev_kmh": statistics.stdev(seed_speeds) * 3.6,
     }
+
+
+def calibrate_route_flow(route_name, route, target_speed, krauss_params):
+    """Total route flow (veh/h) that reproduces the TomTom speed (option A)."""
+    lanes = bottleneck_lanes(route["topology"], route["sumo_edges"])
+    result = bisect_route_speed(route_name, route, target_speed, krauss_params, None,
+                                (FLOW_MIN_VEH_H, FLOW_MAX_VEH_H_PER_LANE * lanes), "flow_veh_h")
+    return {"method": "tomtom_speed", **result, "bottleneck_lanes": lanes}
+
+
+def calibrate_route_speed_factor(route_name, route, target_speed, krauss_params, flow):
+    """speedFactor that reproduces the TomTom speed at a fixed flow (option B, one value per route)."""
+    result = bisect_route_speed(route_name, route, target_speed, krauss_params, flow, SPEED_FACTOR_INTERVAL,
+                                "speed_factor")
+    return {"method": "hcm_flow_speed_factor", "flow_veh_h": flow, **result}
 
 
 def calibrate_route_flows(calibration_data):
@@ -306,23 +328,21 @@ def calibrate_route_flows(calibration_data):
 
     def calibrate(name):
         route = routes[name]
+        target_speed = route["mean_harmonic_speed_24h_kmh"] / 3.6
         if route["topology"] in SPEED_FACTOR_TOPOLOGIES:
             lanes = bottleneck_lanes(route["topology"], route["sumo_edges"])
-            result = {
-                "method": "hcm_fixed",
-                "flow_veh_h": calibration_flow_rate(calibration_data) * lanes,
-                "target_kmh": route["mean_harmonic_speed_24h_kmh"],
-                "calibration_flow": calibration_data["calibration_flow"],
-                "bottleneck_lanes": lanes,
-            }
-            print(f"[FLUXO] {name}: fluxo HCM fixo {result['flow_veh_h']} veh/h "
-                  f"({calibration_data['calibration_flow']} × {lanes} faixas no gargalo)")
-            return name, result
-
-        print(f"[FLUXO] Calibrando {name}...")
-        result = calibrate_route_flow(name, route, route["mean_harmonic_speed_24h_kmh"] / 3.6, DEFAULT_KRAUSS)
+            flow = calibration_flow_rate(calibration_data) * lanes
+            print(f"[FLUXO] Calibrando speedFactor de {name} a {flow} veh/h "
+                  f"({calibration_data['calibration_flow']} × {lanes} faixas no gargalo)...")
+            result = calibrate_route_speed_factor(name, route, target_speed, DEFAULT_KRAUSS, flow)
+            result.update(calibration_flow=calibration_data["calibration_flow"], bottleneck_lanes=lanes)
+            value = f"speedFactor {result['speed_factor']:.3f}"
+        else:
+            print(f"[FLUXO] Calibrando fluxo de {name}...")
+            result = calibrate_route_flow(name, route, target_speed, DEFAULT_KRAUSS)
+            value = f"{result['flow_veh_h']} veh/h"
         status = "OK" if result["reachable"] else "AVISO"
-        print(f"[{status}] {name}: {result['flow_veh_h']} veh/h -> {result['simulated_kmh']:.1f} km/h "
+        print(f"[{status}] {name}: {value} -> {result['simulated_kmh']:.1f} km/h "
               f"(alvo {result['target_kmh']:.1f}, {result['stop_reason']}, {result['trials']} execuções)")
         return name, result
 
@@ -333,7 +353,8 @@ def calibrate_route_flows(calibration_data):
         "metadata": {
             "date": calibration_data["date"],
             "time_zone": calibration_data["time_zone"],
-            "target": "TomTom 24 h mean harmonic speed per route, Krauss fixed at DEFAULT_KRAUSS",
+            "target": "TomTom 24 h mean harmonic speed per route, Krauss fixed at DEFAULT_KRAUSS; "
+                      "flow per route, or speedFactor per route at the HCM flow for speed_factor_topologies",
             "krauss": DEFAULT_KRAUSS,
             "flow_tolerance_kmh": FLOW_TOLERANCE_KMH,
             "signal_coordinated_topologies": list(SIGNAL_COORDINATED_TOPOLOGIES),
@@ -355,19 +376,14 @@ def load_route_flows():
         return json.load(source)
 
 
-def suggest_krauss_parameters(trial, with_speed_factor=False):
-    parameters = {
+def suggest_krauss_parameters(trial):
+    return {
         "accel": trial.suggest_float("accel", 1.0, 3.5),
         "decel": trial.suggest_float("decel", 1.5, 4.5),
         "tau": trial.suggest_float("tau", 0.5, 2.0),
         "sigma": trial.suggest_float("sigma", 0.0, 1.0),
         "minGap": trial.suggest_float("minGap", 1.0, 3.5),
     }
-    if with_speed_factor:
-        # Below 1 only: the vType maxSpeed is the speed limit, so SUMO caps any factor above it.
-        parameters["speedFactor"] = trial.suggest_float("speedFactor", 0.5, 1.0)
-        parameters["speedDev"] = trial.suggest_float("speedDev", 0.05, 0.3)
-    return parameters
 
 
 def calibrate_topology(topology, calibration_data, route_flows=None):
@@ -390,9 +406,8 @@ def calibrate_topology(topology, calibration_data, route_flows=None):
         direction="minimize",
         sampler=optuna.samplers.TPESampler(seed=1, n_startup_trials=N_STARTUP_TRIALS),
     )
-    # Route flows were calibrated with DEFAULT_KRAUSS: start there so the search can only improve on it.
-    with_speed_factor = topology in SPEED_FACTOR_TOPOLOGIES
-    study.enqueue_trial({**DEFAULT_KRAUSS, **({"speedFactor": 1.0, "speedDev": 0.1} if with_speed_factor else {})})
+    # Route flows and speed factors were calibrated with DEFAULT_KRAUSS: start there so the search can only improve on it.
+    study.enqueue_trial(DEFAULT_KRAUSS)
 
     stop = {"reason": None, "best_number": None, "streak": 0}
     # Callbacks run in the trial threads when n_jobs > 1.
@@ -416,7 +431,7 @@ def calibrate_topology(topology, calibration_data, route_flows=None):
                 study.stop()
 
     def objective(trial):
-        parameters = suggest_krauss_parameters(trial, with_speed_factor)
+        parameters = suggest_krauss_parameters(trial)
         error, matched = run_sumo_trial(
             topology, topology_routes, target_speeds, calibration_data, parameters, route_flows,
         )
@@ -439,8 +454,10 @@ def calibrate_topology(topology, calibration_data, route_flows=None):
         "trials": len(study.trials),
     }
     if topology in SPEED_FACTOR_TOPOLOGIES:
-        result["calibration_mode"] = "hcm_flow_with_speed_factor_vs_tomtom_24h_mean_speed"
+        result["calibration_mode"] = "hcm_flow_route_speed_factor_vs_tomtom_24h_mean_speed"
         result["route_flows_veh_h"] = {name: route_flows[name] for name in topology_routes if name in route_flows}
+        result["route_speed_factors"] = {name: route["speed_factor"] for name, route in topology_routes.items()
+                                         if "speed_factor" in route}
     elif route_flows:
         result["calibration_mode"] = "coordinated_tls_route_flow_vs_tomtom_24h_mean_speed"
         result["route_flows_veh_h"] = {name: route_flows[name] for name in topology_routes if name in route_flows}
@@ -452,6 +469,10 @@ def calibrate_topology(topology, calibration_data, route_flows=None):
 
 def calibrate_krauss(calibration_data, route_flow_data):
     route_flows = {name: route["flow_veh_h"] for name, route in route_flow_data["routes"].items()}
+    calibration_data = {
+        **calibration_data,
+        "routes": apply_route_speed_factors(calibration_data["routes"], route_flow_data),
+    }
     output = {
         "metadata": {
             "date": calibration_data["date"],

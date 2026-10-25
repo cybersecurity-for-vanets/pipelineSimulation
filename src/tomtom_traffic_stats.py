@@ -1,8 +1,10 @@
 import gzip
 import json
+import math
 import os
+import statistics
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import random
 import requests
@@ -14,6 +16,9 @@ JOB_STATUS_URL = "https://api.tomtom.com/traffic/trafficstats/status/1"
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 MAX_ROUTES_PER_JOB = 20
 MAX_TIME_SETS = 24
+# Limite de dateRanges por job. A página de Route Analysis da TomTom confirma 24 faixas horárias e 20 rotas,
+# mas não o limite de datas; este valor veio de busca e ainda precisa ser confirmado.
+MAX_DATE_RANGES_PER_JOB = 24
 MIN_HOURS_WITH_DATA = 18
 
 
@@ -185,6 +190,136 @@ def normalize_route_analysis(result, routes_config, selected_date, time_zone=Non
     }
 
 
+def normalize_multiday_analysis(jobs, routes_config, time_zone=None):
+    """Junta os brutos de vários jobs em um arquivo por rota, data e hora.
+
+    jobs: lista de {"job_id", "raw_file", "result"}, em que result é o JSON bruto do job.
+    Cada resumo é ligado à data e à faixa horária pelos ecos do próprio JSON (dateRanges e timeSets),
+    não pela posição. Hora sem dado fica null, sem interpolação: excluir ou não é decisão da T1
+    (todo/calibracao_etapa1_tarefas.md).
+    """
+    requested_routes = {
+        f"{topology}_{route_key}": (topology, route_key)
+        for topology, route_key, _ in iter_config_routes(routes_config)
+    }
+    expected_hours = [f"hour_{hour:02d}_{hour + 1:02d}" for hour in range(MAX_TIME_SETS)]
+    job_entries = []
+    all_dates = set()
+    cells = {name: {} for name in requested_routes}
+    samples = {name: {} for name in requested_routes}
+    distances = {name: None for name in requested_routes}
+    unmatched = {name: 0 for name in requested_routes}
+
+    for job in jobs:
+        result = job["result"]
+        dates = {
+            str(item.get("@id")): item.get("from") or item.get("name")
+            for item in result.get("dateRanges", [])
+        }
+        hours = {str(item.get("@id")): item.get("name") for item in result.get("timeSets", [])}
+        job_dates = sorted(set(dates.values()))
+        repeated = all_dates.intersection(job_dates)
+        if repeated:
+            raise ValueError(f"Datas presentes em mais de um job: {', '.join(sorted(repeated))}")
+        all_dates.update(job_dates)
+        job_entries.append({"job_id": job["job_id"], "raw_file": job["raw_file"], "dates": job_dates})
+
+        for route_result in result.get("routes", []):
+            route_name = route_result.get("routeName") or route_result.get("name")
+            if route_name not in requested_routes:
+                continue
+            for summary in route_result.get("summaries", []):
+                key = (dates.get(str(summary.get("dateRange"))), hours.get(str(summary.get("timeSet"))))
+                if None in key:
+                    unmatched[route_name] += 1
+                    continue
+                if distances[route_name] is None and float(summary.get("distance") or 0) > 0:
+                    distances[route_name] = float(summary["distance"])
+                cells[route_name][key] = _hour_values(summary)
+            for segment in route_result.get("segmentResults", []):
+                for item in segment.get("segmentTimeResults", []):
+                    key = (dates.get(str(item.get("dateRange"))), hours.get(str(item.get("timeSet"))))
+                    sample = item.get("normalizedSampleSize")
+                    if None not in key and sample is not None:
+                        samples[route_name].setdefault(key, []).append(float(sample))
+
+    if not all_dates:
+        raise ValueError("Os brutos não trazem nenhuma data em dateRanges")
+    sorted_dates = sorted(all_dates)
+
+    routes = {}
+    skipped = []
+    for route_name, (topology, route_key) in requested_routes.items():
+        if unmatched[route_name]:
+            print(f"[AVISO] {route_name}: {unmatched[route_name]} resumo(s) sem data ou hora no eco; ignorados")
+        days = {}
+        has_speed = False
+        for date_iso in sorted_dates:
+            hourly = {}
+            for hour_name in expected_hours:
+                key = (date_iso, hour_name)
+                values = cells[route_name].get(key, _empty_hour())
+                sample_sizes = samples[route_name].get(key)
+                values["segment_sample_median"] = statistics.median(sample_sizes) if sample_sizes else None
+                has_speed = has_speed or values["speed_kmh"] is not None
+                hourly[hour_name] = values
+            days[date_iso] = {
+                "weekday": WEEKDAYS[date.fromisoformat(date_iso).weekday()],
+                "hours": hourly,
+            }
+        if not has_speed:
+            skipped.append(route_name)
+            continue
+        routes[route_name] = {
+            "topology": topology,
+            "route_key": route_key,
+            "distance_m": distances[route_name],
+            "days": days,
+        }
+
+    if not routes:
+        raise ValueError("TomTom não devolveu nenhuma hora com velocidade em nenhum job")
+    if skipped:
+        print(
+            f"WARNING: TomTom não tem dado para {', '.join(skipped)} em nenhuma data; rotas ignoradas. "
+            "Mova as coordenadas para a mesma via do sentido de viagem e colete de novo."
+        )
+
+    return {
+        "date_from": sorted_dates[0],
+        "date_to": sorted_dates[-1],
+        "time_zone": time_zone or routes_config.get("time_zone", "America/Sao_Paulo"),
+        "time_resolution": "1h",
+        "jobs": job_entries,
+        "skipped_routes": skipped,
+        "routes": routes,
+    }
+
+
+def _empty_hour():
+    return {
+        "speed_kmh": None,
+        "avg_travel_time_s": None,
+        "travel_time_std_s": None,
+        "planning_time_index": None,
+        "segment_sample_median": None,
+    }
+
+
+def _hour_values(summary):
+    # Velocidade 0 significa que nenhuma sonda passou na faixa (ex.: madrugada), então não é dado.
+    speed = summary.get("harmonicAverageSpeed")
+    if speed is None or float(speed) <= 0:
+        return _empty_hour()
+    return {
+        "speed_kmh": float(speed),
+        "avg_travel_time_s": summary.get("averageTravelTime"),
+        "travel_time_std_s": summary.get("travelTimeStandardDeviation"),
+        "planning_time_index": summary.get("planningTimeIndex"),
+        "segment_sample_median": None,
+    }
+
+
 def build_route_analysis_payload(routes_config, tomtom_config):
     date_range = tomtom_config.get("date_range", {})
     date_value = date_range.get("24h_data")
@@ -201,13 +336,7 @@ def build_route_analysis_payload(routes_config, tomtom_config):
     for route in routes:
         route["zoneId"] = time_zone
 
-    time_sets = [
-        {
-            "name": f"hour_{hour:02d}_{hour + 1:02d}",
-            "timeGroups": [{"days": [weekday], "times": [f"{hour:02d}:00-{hour + 1:02d}:00"]}],
-        }
-        for hour in range(MAX_TIME_SETS)
-    ]
+    time_sets = build_time_sets([weekday])
 
     return {
         "jobName": f"krauss-{selected_date.isoformat()}.{random.randint(1, 1000)}",
@@ -222,6 +351,71 @@ def build_route_analysis_payload(routes_config, tomtom_config):
         "mapType": "GENESIS",
         "acceptMode": "AUTO",
     }
+
+
+def build_time_sets(weekdays):
+    return [
+        {
+            "name": f"hour_{hour:02d}_{hour + 1:02d}",
+            "timeGroups": [{"days": list(weekdays), "times": [f"{hour:02d}:00-{hour + 1:02d}:00"]}],
+        }
+        for hour in range(MAX_TIME_SETS)
+    ]
+
+
+def window_dates(tomtom_config):
+    date_range = tomtom_config.get("date_range", {})
+    if not date_range.get("start") or not date_range.get("end"):
+        raise ValueError("tomtom.json precisa definir date_range.start e date_range.end como AAAA-MM-DD")
+    start = date.fromisoformat(date_range["start"])
+    end = date.fromisoformat(date_range["end"])
+    if end < start:
+        raise ValueError("date_range.end é anterior a date_range.start")
+    return [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+
+
+def split_dates_into_jobs(dates, max_per_job=MAX_DATE_RANGES_PER_JOB):
+    """Divide as datas em jobs de tamanho equilibrado: 31 datas com limite 24 viram 16 + 15."""
+    if not dates:
+        raise ValueError("A janela de datas está vazia")
+    job_count = math.ceil(len(dates) / max_per_job)
+    base_size, extra = divmod(len(dates), job_count)
+    jobs = []
+    start = 0
+    for job_index in range(job_count):
+        size = base_size + (1 if job_index < extra else 0)
+        jobs.append(dates[start:start + size])
+        start += size
+    return jobs
+
+
+def build_multiday_payloads(routes_config, tomtom_config):
+    """Um payload por job, com um dateRange por data.
+
+    As timeSets valem para todos os dias da semana. Cada dateRange tem uma única data, então
+    cada combinação dateRange x timeSet devolve só o resultado daquela data e faixa.
+    """
+    time_zone = tomtom_config.get("time_zone", routes_config.get("time_zone", "America/Sao_Paulo"))
+    routes = flatten_routes(routes_config)
+    for route in routes:
+        route["zoneId"] = time_zone
+
+    payloads = []
+    for job_dates in split_dates_into_jobs(window_dates(tomtom_config)):
+        first, last = job_dates[0].isoformat(), job_dates[-1].isoformat()
+        payloads.append({
+            "jobName": f"krauss-{first}_{last}.{random.randint(1, 1000)}",
+            "distanceUnit": "KILOMETERS",
+            "routes": routes,
+            "dateRanges": [
+                {"name": day.isoformat(), "from": day.isoformat(), "to": day.isoformat()}
+                for day in job_dates
+            ],
+            "timeSets": build_time_sets(WEEKDAYS),
+            "mapType": "GENESIS",
+            "acceptMode": "AUTO",
+        })
+    return payloads
 
 
 def _response_json(response):
@@ -253,9 +447,11 @@ def create_and_wait_for_route_analysis(
     max_wait_seconds=24 * 60 * 60,
     timeout_seconds=60,
     session=None,
+    payload=None,
 ):
     session = session or requests.Session()
-    payload = build_route_analysis_payload(routes_config, tomtom_config)
+    if payload is None:
+        payload = build_route_analysis_payload(routes_config, tomtom_config)
     api_key = load_api_key()
 
     try:
@@ -312,7 +508,8 @@ def create_and_wait_for_route_analysis(
 
 def open_download_route_analysis(file_name):
     data = None
-    jobId = file_name.split("_")[1]
+    # Só o nome do arquivo: um caminho com "_" nos diretórios quebraria o split.
+    jobId = Path(file_name).name.split("_")[1]
     
     with open(file_name, 'r', encoding='utf-8') as f:
         data = json.load(f)
