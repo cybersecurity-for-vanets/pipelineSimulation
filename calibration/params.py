@@ -12,6 +12,7 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 PARAMS_PATH = PROJECT_DIR / "conf" / "calibration_params.json"
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 KRAUSS_KEYS = ("accel", "decel", "tau", "sigma", "minGap")
+AGGREGATIONS = ("arithmetic", "harmonic", "median")
 
 
 class CalibrationParamsError(ValueError):
@@ -60,6 +61,25 @@ def validate_calibration_params(params):
         raise CalibrationParamsError("flow.stability_seeds deve ser lista não vazia de inteiros")
 
     _check_integer(_field(params, "simulation.seconds"), "simulation.seconds", minimum=1)
+
+    regimes = _field(params, "target.regimes")
+    if not isinstance(regimes, dict) or not regimes:
+        raise CalibrationParamsError("target.regimes deve ser objeto com pelo menos um regime")
+    used_hours = []
+    for name, regime in regimes.items():
+        hours = regime.get("hours") if isinstance(regime, dict) else None
+        if not _is_list(hours) or not hours or len(set(hours)) != len(hours) \
+                or not all(_is_integer(hour) and 0 <= hour <= 23 for hour in hours):
+            raise CalibrationParamsError(f"target.regimes.{name}.hours deve ser lista de horas iniciais (0 a 23), sem repetição")
+        used_hours.extend(hours)
+    if len(set(used_hours)) != len(used_hours):
+        raise CalibrationParamsError("Dois regimes em target.regimes não podem usar a mesma hora")
+    aggregation = _field(params, "target.aggregation")
+    if aggregation not in AGGREGATIONS:
+        raise CalibrationParamsError(f"target.aggregation deve ser um de {AGGREGATIONS}")
+    min_sample = _field(params, "target.min_normalized_sample_size")
+    if not _is_number(min_sample) or not 0 <= min_sample <= 1:
+        raise CalibrationParamsError("target.min_normalized_sample_size deve ficar entre 0 e 1")
 
     default = _field(params, "krauss.default")
     bounds = _field(params, "krauss.bounds")

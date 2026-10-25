@@ -20,6 +20,14 @@
   "simulation": {
     "seconds": 3600
   },
+  "target": {
+    "regimes": {
+      "peak": {"hours": [6, 7, 8, 15, 16, 17]},
+      "off_peak": {"hours": [9, 10, 11, 12, 13, 14]}
+    },
+    "aggregation": "arithmetic",
+    "min_normalized_sample_size": 0.05
+  },
   "krauss": {
     "default": {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5},
     "bounds": {
