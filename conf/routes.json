@@ -16,8 +16,8 @@
                 "end_coordinates": [-23.547502, -46.647512]
             },
             "neighborhood": {
-                "start_coordinates": [-23.547385358432496, -46.64759304616932],
-                "end_coordinates": [-23.55550224806105, -46.66284300816915]
+                "start_coordinates": [-23.54726, -46.64731],
+                "end_coordinates": [-23.55555, -46.66289] 
             }
         },
         "intersection": {
@@ -33,12 +33,12 @@
             },
             "cross_street": {
                 "downtown": {
-                    "start_coordinates": [-23.58294293063235, -46.72500024672546],
-                    "end_coordinates": [-23.58895081599287, -46.7230081640179]
+                    "start_coordinates": [-23.58290, -46.72504],
+                    "end_coordinates": [-23.58901, -46.72293]
                 },
                 "neighborhood": {
-                    "start_coordinates": [-23.588796, -46.722879],
-                    "end_coordinates": [-23.583231, -46.724542]
+                    "start_coordinates": [-23.58964, -46.72235],
+                    "end_coordinates": [-23.58277, -46.72498]
                 }
             }
         }

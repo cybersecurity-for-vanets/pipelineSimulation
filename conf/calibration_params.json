@@ -1,0 +1,38 @@
+{
+  "tomtom": {
+    "days_of_week": ["MON", "TUE", "WED", "THU", "FRI"],
+    "exclude_dates": []
+  },
+  "topologies": {
+    "signal_coordinated": ["urban_road", "intersection"],
+    "speed_factor": ["highway"]
+  },
+  "speed_factor": {
+    "interval": [0.5, 1.0]
+  },
+  "flow": {
+    "min_veh_h": 50,
+    "max_veh_h_per_lane": 2000,
+    "tolerance_kmh": 1.0,
+    "max_iterations": 12,
+    "stability_seeds": [1, 2, 3]
+  },
+  "simulation": {
+    "seconds": 3600
+  },
+  "krauss": {
+    "default": {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5},
+    "bounds": {
+      "accel": [1.0, 3.5],
+      "decel": [1.5, 4.5],
+      "tau": [0.5, 2.0],
+      "sigma": [0.0, 1.0],
+      "minGap": [1.0, 3.5]
+    },
+    "sampler_seed": 1,
+    "n_trials": 25,
+    "n_startup_trials": 10,
+    "stagnation_patience": 5,
+    "target_relative_rmse": 0.10
+  }
+}
