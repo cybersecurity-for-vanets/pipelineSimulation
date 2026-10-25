@@ -143,7 +143,7 @@ def print_summary(report):
         print(
             f"[{status}] {name:40s} comprimento {route['length_ratio']:.2f}x  "
             f"incompletas {route['incomplete_fraction'] * 100:4.1f}%  "
-            f"warm-up {route['warmup_effect_kmh']:+.1f} km/h"
+            f"warm-up {route['warmup_effect_kmh']:+.2f} km/h"
         )
 
 

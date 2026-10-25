@@ -17,6 +17,13 @@
     "max_iterations": 12,
     "stability_seeds": [1, 2, 3]
   },
+  "replicas": {
+    "seeds": [1, 2, 3, 4, 5]
+  },
+  "acceptance": {
+    "max_depart_delay_s": 90,
+    "max_waiting_fraction": 0.01
+  },
   "simulation": {
     "seconds": 3600,
     "warmup_s": 600

@@ -60,6 +60,15 @@ def validate_calibration_params(params):
     if not _is_list(seeds) or not seeds or not all(_is_integer(seed) for seed in seeds):
         raise CalibrationParamsError("flow.stability_seeds deve ser lista não vazia de inteiros")
 
+    replica_seeds = _field(params, "replicas.seeds")
+    if not _is_list(replica_seeds) or len(replica_seeds) < 2 or len(set(replica_seeds)) != len(replica_seeds) \
+            or not all(_is_integer(seed) for seed in replica_seeds):
+        raise CalibrationParamsError("replicas.seeds deve ser lista de pelo menos 2 inteiros sem repetição")
+    _check_number(_field(params, "acceptance.max_depart_delay_s"), "acceptance.max_depart_delay_s", minimum_exclusive=0)
+    waiting = _field(params, "acceptance.max_waiting_fraction")
+    if not _is_number(waiting) or not 0 <= waiting < 1:
+        raise CalibrationParamsError("acceptance.max_waiting_fraction deve ficar entre 0 e 1")
+
     _check_integer(_field(params, "simulation.seconds"), "simulation.seconds", minimum=1)
     _check_integer(_field(params, "simulation.warmup_s"), "simulation.warmup_s", minimum=0)
     if params["simulation"]["warmup_s"] >= params["simulation"]["seconds"]:
