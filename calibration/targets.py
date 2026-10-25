@@ -5,6 +5,9 @@ segmentos >= target.min_normalized_sample_size. Hora sem dado ou com amostra bai
 interpolação. O alvo de cada regime agrega as células válidas com target.aggregation. A incerteza é o
 espalhamento dos valores diários. Tudo que é constante vem de conf/calibration_params.json.
 
+Das mesmas células válidas sai o alvo de dispersão (T3): CV do tempo de viagem da célula,
+travel_time_std_s / avg_travel_time_s, agregado do mesmo jeito.
+
 Saída: conf/calibration_targets.json. Horas são inícios de faixa: 7 significa 07:00-08:00.
 """
 import argparse
@@ -65,13 +68,14 @@ def cell_status(cell, min_sample):
 
 def build_regime_target(route_days, hours, days_used, min_sample, aggregate):
     valid_values = []
+    valid_cvs, per_day_cv = [], {}
     valid_hours = set()
     reasons_by_hour = {hour: Counter() for hour in hours}
     per_day = {}
     cells_total = 0
 
     for day in days_used:
-        day_values = []
+        day_values, day_cvs = [], []
         for hour in hours:
             cell = route_days[day]["hours"][hour_name(hour)]
             cells_total += 1
@@ -79,12 +83,17 @@ def build_regime_target(route_days, hours, days_used, min_sample, aggregate):
             if status == "valida":
                 day_values.append(cell["speed_kmh"])
                 valid_hours.add(hour)
+                if cell.get("travel_time_std_s") is not None and cell.get("avg_travel_time_s"):
+                    day_cvs.append(cell["travel_time_std_s"] / cell["avg_travel_time_s"])
             else:
                 reasons_by_hour[hour][status] += 1
         per_day[day] = aggregate(day_values) if day_values else None
         valid_values.extend(day_values)
+        per_day_cv[day] = aggregate(day_cvs) if day_cvs else None
+        valid_cvs.extend(day_cvs)
 
     day_values = [value for value in per_day.values() if value is not None]
+    day_cvs = [value for value in per_day_cv.values() if value is not None]
     return {
         "status": "ok" if valid_values else "sem_alvo",
         "target_kmh": aggregate(valid_values) if valid_values else None,
@@ -100,6 +109,9 @@ def build_regime_target(route_days, hours, days_used, min_sample, aggregate):
         "day_std_kmh": statistics.stdev(day_values) if len(day_values) > 1 else None,
         "day_min_kmh": min(day_values) if day_values else None,
         "day_max_kmh": max(day_values) if day_values else None,
+        "target_travel_time_cv": aggregate(valid_cvs) if valid_cvs else None,
+        "travel_time_cv_cells": len(valid_cvs),
+        "day_std_travel_time_cv": statistics.stdev(day_cvs) if len(day_cvs) > 1 else None,
     }
 
 
@@ -149,8 +161,10 @@ def print_summary(targets):
                     f"dp {regime['day_std_kmh']:.1f} km/h em {regime['days_with_value']} dias"
                     if regime["day_std_kmh"] is not None else f"{regime['days_with_value']} dia(s)"
                 )
+                cv = regime["target_travel_time_cv"]
+                cv_text = f"{cv:.3f}" if cv is not None else "  -  "
                 print(
-                    f"[OK] {route_name:40s} {regime_name:9s} {regime['target_kmh']:6.1f} km/h  "
+                    f"[OK] {route_name:40s} {regime_name:9s} {regime['target_kmh']:6.1f} km/h  CV {cv_text}  "
                     f"horas {len(regime['hours_used'])}/{len(regime['hours_used']) + len(regime['hours_excluded'])}  {spread}"
                 )
             else:

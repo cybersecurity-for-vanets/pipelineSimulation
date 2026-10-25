@@ -24,6 +24,29 @@
     "max_depart_delay_s": 90,
     "max_waiting_fraction": 0.01
   },
+  "sensitivity": {
+    "method": "morris",
+    "trajectories": 8,
+    "levels": 4,
+    "seeds": [1, 2, 3],
+    "sampler_seed": 1,
+    "flow_relative_range": [0.8, 1.2],
+    "min_effect_kmh": 1.0,
+    "min_effect_cv": 0.02,
+    "noise_multiplier": 2
+  },
+  "joint": {
+    "speed_dev": {"default": 0.1, "bounds": [0.05, 0.3]},
+    "seeds": [1, 2, 3],
+    "flow_bracket": [0.67, 1.5],
+    "speed_factor_bracket": 0.15,
+    "sampler_seed": 1,
+    "n_trials": 30,
+    "n_startup_trials": 10,
+    "stagnation_patience": 8,
+    "target_max_cv_error": 0.03,
+    "infeasible_penalty": 1.0
+  },
   "simulation": {
     "seconds": 3600,
     "warmup_s": 600

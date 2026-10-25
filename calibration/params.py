@@ -13,6 +13,7 @@ PARAMS_PATH = PROJECT_DIR / "conf" / "calibration_params.json"
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 KRAUSS_KEYS = ("accel", "decel", "tau", "sigma", "minGap")
 AGGREGATIONS = ("arithmetic", "harmonic", "median")
+SENSITIVITY_METHODS = ("morris",)
 
 
 class CalibrationParamsError(ValueError):
@@ -68,6 +69,49 @@ def validate_calibration_params(params):
     waiting = _field(params, "acceptance.max_waiting_fraction")
     if not _is_number(waiting) or not 0 <= waiting < 1:
         raise CalibrationParamsError("acceptance.max_waiting_fraction deve ficar entre 0 e 1")
+
+    if _field(params, "sensitivity.method") not in SENSITIVITY_METHODS:
+        raise CalibrationParamsError(f"sensitivity.method deve ser um de {SENSITIVITY_METHODS}")
+    _check_integer(_field(params, "sensitivity.trajectories"), "sensitivity.trajectories", minimum=2)
+    levels = _field(params, "sensitivity.levels")
+    if not _is_integer(levels) or levels < 2 or levels % 2:
+        raise CalibrationParamsError("sensitivity.levels deve ser inteiro par maior ou igual a 2")
+    sensitivity_seeds = _field(params, "sensitivity.seeds")
+    if not _is_list(sensitivity_seeds) or not sensitivity_seeds or len(set(sensitivity_seeds)) != len(sensitivity_seeds) \
+            or not all(_is_integer(seed) for seed in sensitivity_seeds):
+        raise CalibrationParamsError("sensitivity.seeds deve ser lista não vazia de inteiros sem repetição")
+    _check_integer(_field(params, "sensitivity.sampler_seed"), "sensitivity.sampler_seed", minimum=0)
+    _check_interval(_field(params, "sensitivity.flow_relative_range"), "sensitivity.flow_relative_range",
+                    minimum_exclusive=0)
+    _check_number(_field(params, "sensitivity.min_effect_kmh"), "sensitivity.min_effect_kmh", minimum_exclusive=0)
+    _check_number(_field(params, "sensitivity.min_effect_cv"), "sensitivity.min_effect_cv", minimum_exclusive=0)
+    _check_number(_field(params, "sensitivity.noise_multiplier"), "sensitivity.noise_multiplier", minimum_exclusive=0)
+
+    speed_dev = _field(params, "joint.speed_dev")
+    if not isinstance(speed_dev, dict) or set(speed_dev) != {"default", "bounds"}:
+        raise CalibrationParamsError("joint.speed_dev deve ter as chaves default e bounds")
+    _check_interval(speed_dev["bounds"], "joint.speed_dev.bounds", minimum_exclusive=None)
+    _check_number(speed_dev["default"], "joint.speed_dev.default")
+    if not speed_dev["bounds"][0] <= speed_dev["default"] <= speed_dev["bounds"][1] or speed_dev["bounds"][0] < 0:
+        raise CalibrationParamsError("joint.speed_dev.default deve ficar dentro de joint.speed_dev.bounds, que não pode ser negativo")
+    joint_seeds = _field(params, "joint.seeds")
+    if not _is_list(joint_seeds) or len(joint_seeds) < 2 or len(set(joint_seeds)) != len(joint_seeds) \
+            or not all(_is_integer(seed) for seed in joint_seeds):
+        raise CalibrationParamsError("joint.seeds deve ser lista de pelo menos 2 inteiros sem repetição")
+    bracket = _field(params, "joint.flow_bracket")
+    _check_interval(bracket, "joint.flow_bracket", minimum_exclusive=0)
+    if not bracket[0] < 1 < bracket[1]:
+        raise CalibrationParamsError("joint.flow_bracket deve conter 1 (o fluxo da T2)")
+    _check_number(_field(params, "joint.speed_factor_bracket"), "joint.speed_factor_bracket", minimum_exclusive=0)
+    _check_integer(_field(params, "joint.sampler_seed"), "joint.sampler_seed", minimum=0)
+    joint_trials = _field(params, "joint.n_trials")
+    _check_integer(joint_trials, "joint.n_trials", minimum=1)
+    _check_integer(_field(params, "joint.n_startup_trials"), "joint.n_startup_trials", minimum=0)
+    if params["joint"]["n_startup_trials"] > joint_trials:
+        raise CalibrationParamsError("joint.n_startup_trials não pode passar de joint.n_trials")
+    _check_integer(_field(params, "joint.stagnation_patience"), "joint.stagnation_patience", minimum=1)
+    _check_number(_field(params, "joint.target_max_cv_error"), "joint.target_max_cv_error", minimum_exclusive=0)
+    _check_number(_field(params, "joint.infeasible_penalty"), "joint.infeasible_penalty", minimum_exclusive=0)
 
     _check_integer(_field(params, "simulation.seconds"), "simulation.seconds", minimum=1)
     _check_integer(_field(params, "simulation.warmup_s"), "simulation.warmup_s", minimum=0)

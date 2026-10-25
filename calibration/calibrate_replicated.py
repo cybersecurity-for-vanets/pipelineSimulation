@@ -5,10 +5,8 @@ ou o speedFactor ao fluxo HCM fixo (highway) cuja velocidade média entre as sem
 reproduz o alvo. Cada avaliação roda todas as sementes; a decisão da bisseção e a escolha do valor final
 usam a média, não uma semente só. A velocidade conta só as partidas a partir de simulation.warmup_s.
 
-Fila pontual: o tempo de viagem inclui o departDelay. Nas rotas cuja primeira aresta é curta e termina em
-semáforo, o veículo que espera inserção está, na prática, parado no primeiro vermelho; sem esse tempo a
-velocidade fica alta demais e a bisseção empurra o fluxo para cima. O warm-up usa a partida pretendida
-(depart - departDelay), que é quando o veículo chega à fila.
+Fila pontual: o tempo de viagem inclui o departDelay (ver simulation.py); sem esse tempo a velocidade fica
+alta demais nas rotas com semáforo na entrada e a bisseção empurra o fluxo para cima.
 
 Uma rota só é marcada como convergida se |média - alvo| <= flow.tolerance_kmh e, em todas as sementes,
 o maior atraso de partida <= acceptance.max_depart_delay_s (cerca de um ciclo de semáforo: a fila do
@@ -23,20 +21,19 @@ import json
 import math
 import statistics
 import sys
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
 try:
     from .params import PROJECT_DIR, load_calibration_params
+    from .simulation import simulate
 except ImportError:
     from params import PROJECT_DIR, load_calibration_params
+    from simulation import simulate
 
 sys.path.insert(0, str(PROJECT_DIR / "src"))
-import calibrate_stage1  # noqa: E402
 from calibrate_stage1 import (  # noqa: E402
-    MAX_WORKERS, bottleneck_lanes, calibration_flow_rate, load_calibration_data, run_sumo,
+    MAX_WORKERS, bottleneck_lanes, calibration_flow_rate, load_calibration_data,
 )
-from generate_routes import safe_id  # noqa: E402
 
 
 CONF_DIR = PROJECT_DIR / "conf"
@@ -45,32 +42,6 @@ OUTPUT_PATH = CONF_DIR / "route_flows_replicated.json"
 
 # Sementes de todas as avaliações em andamento dividem os mesmos processos SUMO.
 _sumo_pool = ThreadPoolExecutor(MAX_WORKERS)
-
-
-def read_trip_speeds_with_queue(tripinfo_path, route_names, min_depart=0.0):
-    """Como calibrate_stage1.read_trip_speeds, com o departDelay no tempo de viagem (fila pontual)."""
-    distance_by_route = {name: 0.0 for name in route_names}
-    duration_by_route = {name: 0.0 for name in route_names}
-    flow_to_route = {f"flow_{safe_id(name)}": name for name in route_names}
-
-    for trip in ET.parse(tripinfo_path).getroot().findall("tripinfo"):
-        route_name = flow_to_route.get(trip.get("id", "").rsplit(".", 1)[0])
-        if route_name is None:
-            continue
-        delay = float(trip.get("departDelay", 0))
-        if float(trip.get("depart", 0)) - delay < min_depart:
-            continue
-        duration = float(trip.get("duration", 0)) + delay
-        distance = float(trip.get("routeLength", 0))
-        if duration > 0 and distance > 0:
-            distance_by_route[route_name] += distance
-            duration_by_route[route_name] += duration
-
-    return {
-        route_name: distance / duration_by_route[route_name]
-        for route_name, distance in distance_by_route.items()
-        if distance > 0 and duration_by_route[route_name] > 0
-    }
 
 
 def waiting_fraction(stats):
@@ -89,19 +60,19 @@ def replicated_speed(route_name, route, value, field, fixed_flow, krauss, params
     trial_route = route if by_flow else {**route, "speed_factor": value}
     flows = {route_name: value if by_flow else fixed_flow}
 
-    def simulate(seed):
-        return run_sumo(
-            route["topology"], {route_name: trial_route}, 0, krauss, [route_name], route_flows=flows,
-            min_depart=params["simulation"]["warmup_s"], seed=seed, with_stats=True,
-        )
+    def run(seed):
+        return simulate(route["topology"], {route_name: trial_route}, krauss, flows, params["simulation"]["seconds"],
+                        min_depart=params["simulation"]["warmup_s"], seed=seed)
 
     seeds = params["replicas"]["seeds"]
-    results = list(_sumo_pool.map(simulate, seeds))
-    speeds = [speed.get(route_name, 0.0) * 3.6 for speed, _ in results]
+    results = list(_sumo_pool.map(run, seeds))
+    speeds = [metrics.get(route_name, {}).get("speed_kmh", 0.0) for metrics, _ in results]
+    cvs = [metrics[route_name]["travel_time_cv"] for metrics, _ in results if route_name in metrics]
     stats = [stat for _, stat in results]
     return {
         "value": value,
         "mean_kmh": statistics.fmean(speeds),
+        "mean_travel_time_cv": statistics.fmean(cvs) if cvs else None,
         "stdev_kmh": statistics.stdev(speeds),
         "seed_speeds_kmh": dict(zip(map(str, seeds), speeds)),
         "insertion_by_seed": dict(zip(map(str, seeds), stats)),
@@ -157,6 +128,7 @@ def bisect_replicated(route_name, route, target_kmh, field, search_interval, fix
         "seed_stdev_kmh": best["stdev_kmh"],
         "seed_stderr_kmh": best["stdev_kmh"] / math.sqrt(seeds),
         "seed_speeds_kmh": best["seed_speeds_kmh"],
+        "simulated_travel_time_cv": best["mean_travel_time_cv"],
         "within_tolerance": abs(error) <= tolerance,
         "insertion_ok": best["insertion_ok"],
         "converged": converged,
@@ -216,9 +188,6 @@ def main():
 
     if not TARGETS_PATH.is_file():
         raise FileNotFoundError(f"{TARGETS_PATH} não existe; rode python3 calibration/targets.py antes")
-    # run_sumo lê a duração e o leitor de velocidade do módulo; a fonte da duração é calibration_params.json.
-    calibrate_stage1.SIMULATION_SECONDS = params["simulation"]["seconds"]
-    calibrate_stage1.read_trip_speeds = read_trip_speeds_with_queue
     targets = json.loads(TARGETS_PATH.read_text(encoding="utf-8"))
     calibration_data = load_calibration_data()
     routes = calibration_data["routes"]
