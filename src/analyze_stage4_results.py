@@ -347,11 +347,11 @@ def plot_processing_histograms(summary):
 # ==============================================================================
 if __name__ == "__main__":
     print("=== Iniciando Processamento e Análise da Etapa 4 ===")
-    # if export_omnet_results():
-    df_raw, df_summary = process_metrics()
-    if df_raw is not None:
-        generate_plots(df_summary)
-        plot_processing_histograms(df_summary)
-        print("\n=== Etapa 4 Concluída com Sucesso! ===")
-        print(f"- Relatório Estatístico: {SUMMARY_CSV}")
-        print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")
+    if export_omnet_results():
+        df_raw, df_summary = process_metrics()
+        if df_raw is not None:
+            generate_plots(df_summary)
+            plot_processing_histograms(df_summary)
+            print("\n=== Etapa 4 Concluída com Sucesso! ===")
+            print(f"- Relatório Estatístico: {SUMMARY_CSV}")
+            print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")

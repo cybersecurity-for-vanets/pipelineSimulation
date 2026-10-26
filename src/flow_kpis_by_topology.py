@@ -12,11 +12,16 @@ except ImportError:
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
 # ==============================================================================
+SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCAVETOOL_CSV = os.path.join(PROJECT_DIR, "results", "rawData", "scavetool_export.csv")
-OUTPUT_CSV = os.path.join(PROJECT_DIR, "results", "rawData", "flow_kpis_by_topology.csv")
-OUTPUT_SEED_CSV = os.path.join(PROJECT_DIR, "results", "rawData", "flow_kpis_per_seed.csv")
-PLOTS_DIR = os.path.join(PROJECT_DIR, "results", "plots", "flow_kpis")
+if os.path.isdir(SSD_DIR):
+    RESULTS_DIR = os.path.join(SSD_DIR, "results")
+else:
+    RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
+SCAVETOOL_CSV = os.path.join(RESULTS_DIR, "rawData", "scavetool_export.csv")
+OUTPUT_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_by_topology.csv")
+OUTPUT_SEED_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_per_seed.csv")
+PLOTS_DIR = os.path.join(RESULTS_DIR, "plots", "flow_kpis")
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
 FLOWS = ["low_flow", "medium_flow", "high_flow"]
