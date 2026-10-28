@@ -18,6 +18,7 @@ protected:
     static constexpr double PROCESSING_BIN_S = 10e-6;
     static constexpr int PDR_DISTANCE_BINS = 6;        // 50 m bins up to the 300 m range
     static constexpr double PDR_DISTANCE_BIN_M = 50.0;
+    static constexpr double PDR_MARK_MAX_AGE_S = 1.0;  // unanswered marks (lost CAMs) are dropped after this
 
     enum AdaptiveEventKind {
         SEND_ADAPTIVE_CAM = 100,
@@ -37,6 +38,7 @@ protected:
     long cryptoRxOperationCount = 0;
     long pdrExpectedReceptions = 0;
     long pdrReceivedReceptions = 0;
+    long pdrUnexpectedReceptions = 0; // decoded CAMs this node was not counted for at send time (not in the PDR)
     long ff1DecryptFailures = 0;
     long camSentCount = 0;
     long camBytesTotal = 0;
@@ -62,6 +64,13 @@ protected:
     long processingBins[PROCESSING_BINS + 1] = {};
     long pdrExpectedByDistance[PDR_DISTANCE_BINS] = {};
     long pdrReceivedByDistance[PDR_DISTANCE_BINS] = {};
+    // CAMs this node was counted as an expected receiver for, keyed by the CAM's tree id (shared by every
+    // receiver's copy). A reception counts for the PDR only if its mark is here, so received <= expected.
+    struct PdrMark {
+        int distanceBin;
+        omnetpp::simtime_t sentAt;
+    };
+    std::unordered_map<long, PdrMark> pdrMarks;
     double ipgTotalS = 0;
     long ipgSamples = 0;
     double peakAoITotalS = 0;
@@ -151,7 +160,8 @@ protected:
     void processReceivedCam(veins::DemoSafetyMessage* bsm);
     void updateChannelBusyRatio();
     void resetStatistics();
-    long countPotentialCamReceivers(long* byDistance) const;
+    long markExpectedCamReceivers(long camTreeId);
+    void prunePdrMarks();
     bool isVehicleCam(const veins::DemoSafetyMessage* bsm) const;
     double recordLatency(const omnetpp::cMessage* message);
     void recordMessageSample(MessageVector& sample, double value);

@@ -100,6 +100,9 @@ cmdenv-express-mode = true
 cmdenv-autoflush = true
 cmdenv-status-frequency = 10s
 sim-time-limit = {WARMUP_S + MEASUREMENT_S}s
+# Estatísticas do Veins (@statistic, ex.: channelBusy:timeavg) só contam após o aquecimento,
+# igual aos escalares da aplicação (warmupTime).
+warmup-period = {WARMUP_S}s
 repeat = {REPEATS}
 seed-set = ${{repetition}}
 

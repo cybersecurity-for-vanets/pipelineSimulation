@@ -1,5 +1,6 @@
 import os
 import glob
+import argparse
 import subprocess
 import pandas as pd
 import numpy as np
@@ -346,12 +347,18 @@ def plot_processing_histograms(summary):
 # 5. EXECUÇÃO DA ETAPA 4
 # ==============================================================================
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Etapa 4")
+    parser.add_argument("--skip-csv", action="store_true", help="Reutiliza o CSV existente")
+    args = parser.parse_args()
+
     print("=== Iniciando Processamento e Análise da Etapa 4 ===")
-    if export_omnet_results():
-        df_raw, df_summary = process_metrics()
-        if df_raw is not None:
-            generate_plots(df_summary)
-            plot_processing_histograms(df_summary)
-            print("\n=== Etapa 4 Concluída com Sucesso! ===")
-            print(f"- Relatório Estatístico: {SUMMARY_CSV}")
-            print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")
+    if not args.skip_csv:
+        export_omnet_results()
+
+    df_raw, df_summary = process_metrics()
+    if df_raw is not None:
+        generate_plots(df_summary)
+        plot_processing_histograms(df_summary)
+        print("\n=== Etapa 4 Concluída com Sucesso! ===")
+        print(f"- Relatório Estatístico: {SUMMARY_CSV}")
+        print(f"- Gráficos PDF/PNG: {PLOTS_DIR}")

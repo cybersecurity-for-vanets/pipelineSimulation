@@ -5,8 +5,10 @@ import numpy as np
 import pandas as pd
 
 try:
+    from .generate_stage2_configs import MEASUREMENT_S
     from .protocols import load_protocols
 except ImportError:
+    from generate_stage2_configs import MEASUREMENT_S
     from protocols import load_protocols
 
 # ==============================================================================
@@ -21,6 +23,7 @@ else:
 SCAVETOOL_CSV = os.path.join(RESULTS_DIR, "rawData", "scavetool_export.csv")
 OUTPUT_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_by_topology.csv")
 OUTPUT_SEED_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_per_seed.csv")
+OUTPUT_DISTANCE_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_by_distance.csv")
 PLOTS_DIR = os.path.join(RESULTS_DIR, "plots", "flow_kpis")
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
@@ -28,13 +31,19 @@ FLOWS = ["low_flow", "medium_flow", "high_flow"]
 PROTOCOLS = list(load_protocols())
 METRICS = ["PDR (%)", "CBR (%)", "Latency E2E (ms)"]
 
+# Faixas de distância do PDR (ver LatencyTraCIDemo11p.h): 50 m cada; a última acumula tudo acima de 250 m.
+PDR_DISTANCE_BIN_M = 50
+PDR_DISTANCE_BINS = 6
+
 # Escalares usados (ver LatencyTraCIDemo11p.cc). Latência E2E = packetLatencyTotalMs / packetLatencySamples,
 # cada amostra é (instante de recepção - instante de criação) do CAM.
 SCALARS = {
     "pdrExpectedReceptions", "pdrReceivedReceptions",
     "packetLatencyTotalMs", "packetLatencySamples",
     "channelBusy:timeavg",
-}
+    # Veículos ativos = soma de measurementTimeS / MEASUREMENT_S (média de veículos simultâneos na medição).
+    "measurementTimeS",
+} | {f"pdr{kind}_d{index}" for kind in ("Expected", "Received") for index in range(PDR_DISTANCE_BINS)}
 
 # ==============================================================================
 # 2. LEITURA EM STREAMING DO SCAVETOOL EXPORT
@@ -103,6 +112,7 @@ def kpis_per_run(sums, counts, configs, seeds):
         latency_samples = value_of(s, "packetLatencySamples")
         cbr_sum = value_of(s, "channelBusy:timeavg")
         cbr_count = value_of(c, "channelBusy:timeavg")
+        vehicle_seconds = value_of(s, "measurementTimeS")
 
         rows.append({
             "run": run,
@@ -115,8 +125,39 @@ def kpis_per_run(sums, counts, configs, seeds):
             # CBR da execução: média dos nós (cada nó reporta channelBusy:timeavg).
             "CBR (%)": 100 * cbr_sum / cbr_count if cbr_count > 0 else np.nan,
             "Latency E2E (ms)": latency_total / latency_samples if latency_samples > 0 else np.nan,
+            "Active vehicles": vehicle_seconds / MEASUREMENT_S,
         })
     return pd.DataFrame(rows)
+
+
+def distance_pdr_per_run(sums, configs):
+    """PDR por faixa de distância em cada execução (recepções somadas sobre todos os nós)."""
+    rows = []
+    for run, config in configs.items():
+        parsed = parse_config(config)
+        if parsed is None or run not in sums.index:
+            continue
+        topology, protocol, flow = parsed
+        for index in range(PDR_DISTANCE_BINS):
+            expected = value_of(sums.loc[run], f"pdrExpected_d{index}")
+            received = value_of(sums.loc[run], f"pdrReceived_d{index}")
+            rows.append({
+                "run": run, "Topology": topology, "Scenario": flow, "Protocol": protocol,
+                "Distance bin": index,
+                "Distance min (m)": index * PDR_DISTANCE_BIN_M,
+                "PDR (%)": 100 * received / expected if expected > 0 else np.nan,
+            })
+    return pd.DataFrame(rows)
+
+
+def summarize_distance(distance_runs):
+    """Média e IC 95% entre sementes do PDR de cada faixa de distância."""
+    keys = ["Topology", "Scenario", "Protocol", "Distance bin", "Distance min (m)"]
+    summary = distance_runs.groupby(keys)["PDR (%)"].agg(["mean", "std", "count"]).reset_index()
+    summary = summary.rename(columns={"mean": "PDR (%)", "count": "N"})
+    summary["PDR (%) CI95"] = 1.96 * summary["std"].fillna(0) / np.sqrt(summary["N"])
+    summary = ordered(summary.drop(columns="std"))
+    return summary.sort_values(keys).reset_index(drop=True)
 
 
 def ordered(frame):
@@ -205,6 +246,10 @@ def main():
     seed_rows = ordered(run_kpis).sort_values(["Topology", "Scenario", "Protocol", "Seed"]).reset_index(drop=True)
     seed_rows.to_csv(OUTPUT_SEED_CSV, index=False, float_format="%.4f")
     print(f"[OK] Valores por semente salvos em: '{OUTPUT_SEED_CSV}'")
+
+    distance_summary = summarize_distance(distance_pdr_per_run(sums, configs))
+    distance_summary.to_csv(OUTPUT_DISTANCE_CSV, index=False, float_format="%.4f")
+    print(f"[OK] PDR por distância salvo em: '{OUTPUT_DISTANCE_CSV}'")
 
     print("[4/4] Gerando gráficos de dispersão por semente...")
     plot_seed_scatter(run_kpis)

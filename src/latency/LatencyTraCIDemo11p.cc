@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -183,6 +184,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::handleSelfMsg(cMessage* msg)
 
     if (msg == channelBusyRatioEvent) {
         updateChannelBusyRatio();
+        prunePdrMarks();
         scheduleAt(simTime() + cbrWindow, channelBusyRatioEvent);
         scheduleAdaptiveCam();
         return;
@@ -292,7 +294,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::sendPendingCam()
 
     auto* cam = pendingCam;
     pendingCam = nullptr;
-    pdrExpectedReceptions += countPotentialCamReceivers(pdrExpectedByDistance);
+    pdrExpectedReceptions += markExpectedCamReceivers(cam->getTreeId());
     // Sender-side processing (queue wait + service), used to split latency at the receiver.
     cam->addPar("txProcessingS").setDoubleValue((simTime() - cam->getCreationTime()).dbl());
     const simtime_t generationTime = cam->getCreationTime();
@@ -323,8 +325,6 @@ void pipelineSimulation::LatencyTraCIDemo11p::processReceivedCam(veins::DemoSafe
     recordMessageSample(processingLatencyVec, processingS * 1000.0);
     recordMessageSample(networkLatencyVec, (latencyS - processingS) * 1000.0);
     ++processingBins[std::min(static_cast<int>(processingS / PROCESSING_BIN_S), PROCESSING_BINS)];
-
-    ++pdrReceivedByDistance[distanceBin(curPosition.distance(bsm->getSenderPos()))];
 
     // IPG: arrival-to-arrival. Peak AoI at this arrival: age of the previous received CAM from the same station.
     const simtime_t now = simTime();
@@ -379,6 +379,9 @@ void pipelineSimulation::LatencyTraCIDemo11p::resetStatistics()
     cryptoRxOperationCount = 0;
     pdrExpectedReceptions = 0;
     pdrReceivedReceptions = 0;
+    pdrUnexpectedReceptions = 0;
+    // Marks from before the warm-up belong to expected counts that were just reset.
+    pdrMarks.clear();
     camSentCount = 0;
     camBytesTotal = 0;
     camLowFrequencyCount = 0;
@@ -405,7 +408,16 @@ void pipelineSimulation::LatencyTraCIDemo11p::onBSM(veins::DemoSafetyMessage* bs
         veins::TraCIDemo11p::onBSM(bsm);
         return;
     }
-    ++pdrReceivedReceptions;
+    // Distance bin as counted by the sender, so each bin's received count is a subset of its expected count.
+    auto mark = pdrMarks.find(bsm->getTreeId());
+    if (mark != pdrMarks.end()) {
+        ++pdrReceivedReceptions;
+        ++pdrReceivedByDistance[mark->second.distanceBin];
+        pdrMarks.erase(mark);
+    }
+    else {
+        ++pdrUnexpectedReceptions;
+    }
 
     if (cryptoRxDelay == SIMTIME_ZERO) {
         processReceivedCam(bsm);
@@ -426,6 +438,10 @@ void pipelineSimulation::LatencyTraCIDemo11p::onWSM(veins::BaseFrame1609_4*)
 void pipelineSimulation::LatencyTraCIDemo11p::finish()
 {
     veins::TraCIDemo11p::finish();
+    if (camFieldCipher) recordScalar("ff1DecryptFailures", ff1DecryptFailures);
+    // A vehicle that leaves SUMO before the warm-up ends never reset its counters: recording them would mix
+    // warm-up data into the KPIs.
+    if (simTime() < measurementStart) return;
     if (channelBusyRatioSamples > 0) {
         recordScalar("meanChannelBusyRatio", channelBusyRatioTotal / channelBusyRatioSamples);
     }
@@ -437,7 +453,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::finish()
     recordScalar("cryptoRxOperationCount", cryptoRxOperationCount);
     recordScalar("pdrExpectedReceptions", pdrExpectedReceptions);
     recordScalar("pdrReceivedReceptions", pdrReceivedReceptions);
-    if (camFieldCipher) recordScalar("ff1DecryptFailures", ff1DecryptFailures);
+    recordScalar("pdrUnexpectedReceptions", pdrUnexpectedReceptions);
     recordScalar("camSentCount", camSentCount);
     recordScalar("camBytesTotal", camBytesTotal);
     recordScalar("camLowFrequencyCount", camLowFrequencyCount);
@@ -484,7 +500,7 @@ void pipelineSimulation::LatencyTraCIDemo11p::recordMessageSample(MessageVector&
     if (sample.seen++ % messageVectorStride == 0) sample.vector.record(value);
 }
 
-long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers(long* byDistance) const
+long pipelineSimulation::LatencyTraCIDemo11p::markExpectedCamReceivers(long camTreeId)
 {
     auto* systemModule = getSimulation()->getSystemModule();
     long receiverCount = 0;
@@ -500,9 +516,19 @@ long pipelineSimulation::LatencyTraCIDemo11p::countPotentialCamReceivers(long* b
         const double distance = curPosition.distance(application->curPosition);
         if (distance > camCommunicationRange) continue;
         ++receiverCount;
-        if (byDistance) ++byDistance[distanceBin(distance)];
+        const int bin = distanceBin(distance);
+        ++pdrExpectedByDistance[bin];
+        application->pdrMarks[camTreeId] = PdrMark{bin, simTime()};
     }
     return receiverCount;
+}
+
+void pipelineSimulation::LatencyTraCIDemo11p::prunePdrMarks()
+{
+    const simtime_t oldest = simTime() - PDR_MARK_MAX_AGE_S;
+    for (auto mark = pdrMarks.begin(); mark != pdrMarks.end();) {
+        mark = mark->second.sentAt < oldest ? pdrMarks.erase(mark) : std::next(mark);
+    }
 }
 
 int pipelineSimulation::LatencyTraCIDemo11p::distanceBin(double meters)

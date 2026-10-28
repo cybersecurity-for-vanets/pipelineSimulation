@@ -1,42 +1,21 @@
 import argparse
 import os
-import sys
 
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.lines import Line2D
 
-SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if os.path.isdir(SSD_DIR):
-    RESULTS_DIR = os.path.join(SSD_DIR, "results")
-else:
-    RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
-
-sys.path.insert(0, os.path.join(PROJECT_DIR, "src"))
-from protocols import load_protocols  # noqa: E402
+from plot_common import (COLORS, FLOW_LABELS, FLOWS, MARKERS, METRIC_AXIS_LABELS, METRIC_FILE_NAMES,
+                         METRIC_TITLES, PROTOCOLS, RAW_DATA_DIR, RESULTS_DIR, TOPOLOGIES)
+from plot_common import save as save_figure
 
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
 # ==============================================================================
-DATA_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_per_seed.csv")
+DATA_CSV = os.path.join(RAW_DATA_DIR, "flow_kpis_per_seed.csv")
 PLOTS_DIR = os.path.join(RESULTS_DIR, "plots", "scatter")
 
-TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
-FLOWS = ["low_flow", "medium_flow", "high_flow"]
-FLOW_LABELS = {"low_flow": "Baixo", "medium_flow": "Médio", "high_flow": "Alto"}
-PROTOCOLS = list(load_protocols())
 METRICS = ["PDR (%)", "CBR (%)", "Latency E2E (ms)"]
-METRIC_AXIS_LABELS = {
-    "PDR (%)": "Taxa de entrega de pacotes (%)",
-    "CBR (%)": "Taxa de ocupação do canal (%)",
-    "Latency E2E (ms)": "Latência fim a fim (ms)",
-}
-METRIC_TITLES = {"PDR (%)": "PDR", "CBR (%)": "CBR", "Latency E2E (ms)": "Latência E2E"}
-METRIC_FILE_NAMES ={"PDR (%)": "pdr", "CBR (%)": "cbr", "Latency E2E (ms)": "latencia_e2e"}
-
-COLORS = {"highway": "#1f77b4", "urbanRoad": "#ff7f0e", "intersection": "#2ca02c"}
-MARKERS = ["o", "s", "^", "D", "v", "P"]
 
 # ==============================================================================
 # 2. DESENHO
@@ -90,11 +69,7 @@ def add_legends(figure, data):
 
 
 def save(figure, file_name):
-    os.makedirs(PLOTS_DIR, exist_ok=True)
-    path = os.path.join(PLOTS_DIR, file_name)
-    figure.savefig(path, dpi=200)
-    plt.close(figure)
-    print(f"[OK] Gráfico salvo em: '{path}'")
+    save_figure(figure, PLOTS_DIR, file_name)
 
 # ==============================================================================
 # 3. EXECUÇÃO

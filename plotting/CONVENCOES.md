@@ -12,8 +12,11 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 | --- | --- | --- |
 | `flow_kpis_per_seed.csv` | uma linha por execução (semente) | dispersão, boxplot, violino |
 | `flow_kpis_by_topology.csv` | média e IC 95% por topologia, fluxo e protocolo | barras com IC, linhas, heatmap |
+| `flow_kpis_by_distance.csv` | PDR médio e IC 95% por topologia, fluxo, protocolo e faixa de distância (50 m) | curvas PDR × distância |
 
 - Colunas disponíveis nos dois arquivos: `Topology`, `Scenario`, `Protocol`, `PDR (%)`, `CBR (%)`, `Latency E2E (ms)`. O arquivo por semente também tem `run` e `Seed`, e o resumo tem `N` e as colunas `… CI95`.
+- O arquivo por semente também tem `Active vehicles`: média de veículos simultâneos na janela de medição (soma de `measurementTimeS` / `MEASUREMENT_S`).
+- O PDR só é consistente somado por execução: as recepções esperadas são contadas no emissor e as recebidas no receptor. Não calcule PDR por nó.
 - Se um gráfico precisar de uma métrica que não está nesses CSVs, **inclua a métrica em `src/flow_kpis_by_topology.py`** e regere o CSV. Não a recalcule dentro do script de plot.
 - Não altere nem sobrescreva os CSVs de entrada a partir de um script de gráfico.
 
@@ -48,7 +51,7 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 | Média do grupo | traço preto `_` | `s=400`, `linewidths=2`, `zorder=3` |
 
 - Mantenha a mesma cor para a mesma topologia e o mesmo marcador para o mesmo protocolo em todos os gráficos. Se um tipo de gráfico não suportar marcadores (barras, por exemplo), codifique o protocolo com a mesma ordem de posição e deixe a topologia como cor.
-- Ao reaproveitar essas constantes em um segundo script, mova-as para um módulo comum em `ploting/` em vez de copiar os dicionários.
+- Essas constantes, as traduções e `save()` ficam em `plot_common.py`. Importe de lá em vez de copiar os dicionários.
 
 ### 4.2 Textos
 
