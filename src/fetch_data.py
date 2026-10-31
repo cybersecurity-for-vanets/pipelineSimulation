@@ -1,49 +1,39 @@
-import json
+"""Etapa 1.1: redes OSM/SUMO em volta dos trechos CET e mapeamento das rotas para arestas SUMO.
+
+Entrada: conf/routes.json (trechos CET MSVP 2019 por topologia, com pontos [lat, lon] em ordem de viagem).
+Saídas: osmFiles/<topologia>.osm e .net.xml, e conf/cet_scenarios.json com as rotas mapeadas.
+
+Os dados de volume e velocidade da CET ficam em conf/cet_*_2019.csv e são lidos na calibração.
+"""
 import argparse
+import json
 import math
 import os
 import shutil
 import subprocess
+import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
 
 try:
-    from .tomtom_traffic_stats import (
-        build_multiday_payloads,
-        build_route_analysis_payload,
-        create_and_wait_for_route_analysis,
-        normalize_multiday_analysis,
-        normalize_route_analysis,
-        open_download_route_analysis,
-        wait_for_route_analysis,
-    )
-    from .sumo_route_utils import _shape_points, build_topology_edge_routes
+    from .sumo_route_utils import build_topology_edge_routes
 except ImportError:
-    from tomtom_traffic_stats import (
-        build_multiday_payloads,
-        build_route_analysis_payload,
-        create_and_wait_for_route_analysis,
-        normalize_multiday_analysis,
-        normalize_route_analysis,
-        open_download_route_analysis,
-        wait_for_route_analysis,
-    )
-    from sumo_route_utils import _shape_points, build_topology_edge_routes
-
+    from sumo_route_utils import build_topology_edge_routes
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR))
+from calibration.params import load_calibration_params  # noqa: E402
+
 CONF_DIR = BASE_DIR / "conf"
 OSM_DIR = BASE_DIR / "osmFiles"
-TOMTOM_CONF_PATH = CONF_DIR / "tomtom.json"
 ROUTES_CONF_PATH = CONF_DIR / "routes.json"
-SCENARIOS_CONF_PATH = CONF_DIR / "coordinates_scenaries.json"
-OUTPUT_CALIBRATION_PATH = CONF_DIR / "tomtom_calibrated_rates.json"
-MULTIDAY_OUTPUT_PATH = CONF_DIR / "tomtom_multiday.json"
-MAP_MARGIN_KM = 2.0
+SCENARIOS_OUTPUT_PATH = CONF_DIR / "cet_scenarios.json"
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
@@ -56,21 +46,27 @@ def load_json(path):
         return json.load(source)
 
 
-def calculate_route_bboxes(calibration_data, margin_km=MAP_MARGIN_KM):
-    coordinates = {}
-    for route in calibration_data.get("routes", {}).values():
-        topology = route["topology"]
-        points = coordinates.setdefault(topology, [])
-        for segment in route.get("segments", []):
-            for longitude, latitude in _shape_points(segment.get("shape_lon_lat")):
-                points.append((latitude, longitude))
-    if not coordinates or any(not points for points in coordinates.values()):
-        raise ValueError("Traffic Stats result has no route geometries for deriving OSM bounds")
+def load_routes(routes_config):
+    """{rota: dados da rota + topology} a partir de conf/routes.json."""
+    routes = {}
+    for topology, topology_config in routes_config["topologies"].items():
+        for name, route in topology_config["routes"].items():
+            if name in routes:
+                raise ValueError(f"Rota repetida em routes.json: {name}")
+            if len(route.get("points", [])) < 2:
+                raise ValueError(f"Rota {name} precisa de pelo menos 2 pontos [lat, lon]")
+            routes[name] = {**route, "topology": topology}
+    return routes
 
+
+def calculate_route_bboxes(routes, margin_km):
+    points = {}
+    for route in routes.values():
+        points.setdefault(route["topology"], []).extend(route["points"])
     bboxes = {}
-    for topology, points in coordinates.items():
-        latitudes = [point[0] for point in points]
-        longitudes = [point[1] for point in points]
+    for topology, coordinates in points.items():
+        latitudes = [point[0] for point in coordinates]
+        longitudes = [point[1] for point in coordinates]
         center_latitude = (min(latitudes) + max(latitudes)) / 2
         latitude_margin = margin_km / 110.574
         longitude_margin = margin_km / (111.320 * max(math.cos(math.radians(center_latitude)), 0.1))
@@ -84,52 +80,86 @@ def calculate_route_bboxes(calibration_data, margin_km=MAP_MARGIN_KM):
 
 
 def download_osm_map(topology, bbox, session=None):
+    """Só as vias (way[highway]) do bbox, pelo Overpass: o centro de São Paulo passa do limite da API do OSM."""
     session = session or requests.Session()
     session.headers.update({"User-Agent": OSM_USER_AGENT})
     min_lat, min_lon, max_lat, max_lon = bbox
     osm_path = OSM_DIR / f"{TOPOLOGY_FILE_NAMES.get(topology, topology)}.osm"
-    bbox_string = f"{min_lon},{min_lat},{max_lon},{max_lat}"
-    map_url = f"https://api.openstreetmap.org/api/0.6/map?bbox={bbox_string}"
+    query = f'[out:xml][timeout:180];(way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});>;);out body;'
 
-    try:
-        response = session.get(map_url, timeout=60)
-    except requests.RequestException:
-        response = None
-    if response is None or response.status_code != 200 or not response.content:
-        query = (
-            f'[out:xml][timeout:180];(way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});>;);out body;'
-        )
-        response = None
-        for attempt in range(3):
-            for endpoint in OVERPASS_ENDPOINTS:
-                try:
-                    response = session.get(endpoint, params={"data": query}, timeout=200)
-                except requests.RequestException:
-                    response = None
-                    continue
-                if response.status_code == 200 and response.content:
-                    break
-                print(f"[OSM] {topology}: {endpoint} returned HTTP {response.status_code}; retrying")
-            else:
-                time.sleep(10 * (attempt + 1))
+    response = None
+    for attempt in range(2):
+        for endpoint in OVERPASS_ENDPOINTS:
+            try:
+                response = session.post(endpoint, data={"data": query}, timeout=120)
+            except requests.RequestException as error:
+                print(f"[OSM] {topology}: {endpoint} falhou ({error.__class__.__name__}); tentando o próximo")
+                response = None
                 continue
+            if response.status_code == 200 and response.content:
+                break
+            print(f"[OSM] {topology}: {endpoint} respondeu HTTP {response.status_code}; tentando o próximo")
+            response = None
+        if response is not None:
             break
-        if response is None:
-            raise RuntimeError(f"All OSM endpoints failed for topology '{topology}'")
-    response.raise_for_status()
-    if not response.content:
-        raise RuntimeError(f"OSM returned an empty map for topology '{topology}'")
-
+        time.sleep(10)
     OSM_DIR.mkdir(parents=True, exist_ok=True)
-    osm_path.write_bytes(response.content)
-    print(f"[OSM] {topology}: saved map using route-derived bounds to {osm_path}")
+    if response is None:
+        print(f"[OSM] {topology}: Overpass indisponível; baixando em blocos pela API do OSM")
+        osm_path.write_bytes(download_osm_api_tiles(bbox, session))
+    else:
+        osm_path.write_bytes(response.content)
+    print(f"[OSM] {topology}: mapa salvo em {osm_path}")
     return osm_path
+
+
+def download_osm_api_tiles(bbox, session, depth=0):
+    """Mapa do bbox pela API do OSM (limite de 50 mil nós por pedido), dividindo em quatro quando passa do limite.
+
+    Os blocos são unidos por id de elemento: nós e vias na borda de dois blocos aparecem uma vez só.
+    """
+    tiles = _api_tiles(bbox, session, depth)
+    elements = {"node": {}, "way": {}, "relation": {}}
+    for tile in tiles:
+        for element in ET.fromstring(tile):
+            if element.tag in elements:
+                elements[element.tag][element.get("id")] = element
+    root = ET.Element("osm", {"version": "0.6", "generator": "pipelineSimulation fetch_data.py (API tiles)"})
+    min_lat, min_lon, max_lat, max_lon = bbox
+    ET.SubElement(root, "bounds", {"minlat": str(min_lat), "minlon": str(min_lon),
+                                   "maxlat": str(max_lat), "maxlon": str(max_lon)})
+    for tag in ("node", "way", "relation"):
+        for element_id in sorted(elements[tag], key=int):
+            root.append(elements[tag][element_id])
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _api_tiles(bbox, session, depth):
+    min_lat, min_lon, max_lat, max_lon = bbox
+    url = f"https://api.openstreetmap.org/api/0.6/map?bbox={min_lon},{min_lat},{max_lon},{max_lat}"
+    for attempt in range(3):
+        try:
+            response = session.get(url, timeout=120)
+        except requests.RequestException:
+            time.sleep(5 * (attempt + 1))
+            continue
+        if response.status_code == 200:
+            return [response.content]
+        if response.status_code == 400 and depth < 6:
+            middle_lat, middle_lon = (min_lat + max_lat) / 2, (min_lon + max_lon) / 2
+            quarters = [
+                (min_lat, min_lon, middle_lat, middle_lon), (min_lat, middle_lon, middle_lat, max_lon),
+                (middle_lat, min_lon, max_lat, middle_lon), (middle_lat, middle_lon, max_lat, max_lon),
+            ]
+            return [tile for quarter in quarters for tile in _api_tiles(quarter, session, depth + 1)]
+        time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"A API do OSM falhou para o bloco {bbox}")
 
 
 def convert_osm_to_net(topology, osm_path):
     netconvert = os.environ.get("NETCONVERT_BINARY") or shutil.which("netconvert")
     if not netconvert:
-        raise FileNotFoundError("netconvert is not on PATH; set NETCONVERT_BINARY")
+        raise FileNotFoundError("netconvert não está no PATH; defina NETCONVERT_BINARY")
 
     net_path = OSM_DIR / f"{TOPOLOGY_FILE_NAMES.get(topology, topology)}.net.xml"
     command = [
@@ -140,166 +170,64 @@ def convert_osm_to_net(topology, osm_path):
         "--roundabouts.guess", "true",
         "--ramps.guess", "true",
         "--junctions.join", "true",
-        # Only OSM-mapped traffic signals: --tls.guess added uncoordinated 90 s signals
-        # that made free-flow speed slower than TomTom on several routes.
+        # Só os semáforos mapeados no OSM: --tls.guess cria semáforos de 90 s sem coordenação.
     ]
     result = subprocess.run(command, capture_output=True, text=True, cwd=BASE_DIR)
     if result.returncode != 0:
-        raise RuntimeError(f"netconvert failed for '{topology}': {result.stderr.strip()}")
-    print(f"[SUMO] {topology}: network saved to {net_path}")
+        raise RuntimeError(f"netconvert falhou para '{topology}': {result.stderr.strip()}")
+    print(f"[SUMO] {topology}: rede salva em {net_path}")
     return net_path
 
 
-def save_raw_job(job_id, result):
-    """Grava o bruto como conf/jobs_<jobId>_results_<jobName>.json, o mesmo padrão dos arquivos baixados à mão."""
-    job_name = str(result.get("jobName", "krauss")).replace(".", "_")
-    file_name = f"jobs_{job_id}_results_{job_name}.json"
-    path = CONF_DIR / file_name
-    path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-    print(f"[OK] Bruto do job {job_id} salvo em {path}")
-    return file_name
-
-
-def print_multiday_dry_run(payloads):
-    dates_by_job = [[item["from"] for item in payload["dateRanges"]] for payload in payloads]
-    total_dates = sum(len(job_dates) for job_dates in dates_by_job)
-    print(f"[DRY RUN] Janela: {dates_by_job[0][0]} a {dates_by_job[-1][-1]} ({total_dates} datas)")
-    print(f"[DRY RUN] Jobs: {len(payloads)}")
-    for index, job_dates in enumerate(dates_by_job, start=1):
-        print(f"[DRY RUN] Job {index}: {len(job_dates)} datas ({job_dates[0]} a {job_dates[-1]})")
-    print(f"[DRY RUN] Rotas: {len(payloads[0]['routes'])}")
-    print(f"[DRY RUN] Faixas horárias: {len(payloads[0]['timeSets'])}")
-    for route in payloads[0]["routes"]:
-        print(f"[DRY RUN] {route['name']}")
-
-
-def recover_route_analysis(job_id):
-    """Baixa o resultado de um job já criado na TomTom e grava o bruto, sem criar outro job."""
-    print(f"Recuperando job {job_id} já criado na TomTom")
-    result = wait_for_route_analysis(job_id)
-    raw_file = save_raw_job(job_id, result)
-    return {"job_id": job_id, "raw_file": raw_file, "result": result}
-
-
-def run_multiday(args, routes_config, tomtom_config):
-    """Coleta a janela inteira e grava tomtom_multiday.json.
-
-    Não baixa o OSM, não roda netconvert e não altera tomtom_calibrated_rates.json: rodar a rede de novo
-    pode mudar o OSM e invalidar os tls_offsets e as calibrações de fluxo e Krauss.
-
-    Com --job-id, os primeiros payloads são recuperados dos jobs informados (na ordem da janela) e só os
-    restantes são criados. Assim, um job que caiu no meio não é refeito.
-    """
-    print("=== Etapa 1.1 (multi-dia): TomTom Traffic Stats para a janela de tomtom.json ===")
-    if args.dry_run:
-        print_multiday_dry_run(build_multiday_payloads(routes_config, tomtom_config))
-        return
-
-    jobs = []
-    if args.file:
-        for file_name in args.file:
-            print(f"Abrindo bruto: {file_name}")
-            job_id, result = open_download_route_analysis(f"{CONF_DIR}/{file_name}")
-            jobs.append({"job_id": job_id, "raw_file": Path(file_name).name, "result": result})
-    else:
-        # Cada job é salvo antes do próximo; se um falhar, os anteriores podem ser reabertos com -f.
-        recovered_ids = args.job_id or []
-        for index, payload in enumerate(build_multiday_payloads(routes_config, tomtom_config)):
-            if index < len(recovered_ids):
-                jobs.append(recover_route_analysis(recovered_ids[index]))
-                continue
-            job_id, result = create_and_wait_for_route_analysis(routes_config, tomtom_config, payload=payload)
-            raw_file = save_raw_job(job_id, result)
-            jobs.append({"job_id": job_id, "raw_file": raw_file, "result": result})
-
-    data = normalize_multiday_analysis(
-        jobs,
-        routes_config,
-        tomtom_config.get("time_zone", "America/Sao_Paulo"),
-    )
-    with MULTIDAY_OUTPUT_PATH.open("w", encoding="utf-8") as output:
-        json.dump(data, output, indent=2, ensure_ascii=False)
-    print(f"[OK] Dados multi-dia salvos em {MULTIDAY_OUTPUT_PATH}")
-    print(
-        f"[INFO] Jobs: {', '.join(job['job_id'] for job in jobs)}; "
-        f"datas: {data['date_from']} a {data['date_to']}; rotas: {len(data['routes'])}"
-    )
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Fetch one historical TomTom Traffic Stats day for the target routes")
-    parser.add_argument("--dry-run", action="store_true", help="Print the request summary without network calls")
-    parser.add_argument("--multi-day", action="store_true",
-                        help="Collect every date in tomtom.json's window and write conf/tomtom_multiday.json")
-    parser.add_argument("-f", "--file", nargs="+", help="Raw result file(s) in conf/ to open instead of calling the API")
-    parser.add_argument("--job-id", nargs="+",
-                        help="Jobs já criados na TomTom para recuperar, na ordem da janela (só com --multi-day). "
-                             "Os payloads sem jobId são criados normalmente")
+    parser = argparse.ArgumentParser(description="Etapa 1.1: redes OSM/SUMO e rotas CET")
+    parser.add_argument("--skip-download", action="store_true",
+                        help="Usa os .osm já baixados em osmFiles/ (refaz netconvert e o mapeamento)")
+    parser.add_argument("--skip-netconvert", action="store_true",
+                        help="Usa os .net.xml existentes e só refaz o mapeamento das rotas")
     args = parser.parse_args()
 
-    if args.job_id and not args.multi_day:
-        parser.error("--job-id só funciona com --multi-day")
-    if args.job_id and args.file:
-        parser.error("--job-id e -f não podem ser usados juntos")
-
-    tomtom_config = load_json(TOMTOM_CONF_PATH)
+    params = load_calibration_params()
     routes_config = load_json(ROUTES_CONF_PATH)
+    routes = load_routes(routes_config)
+    bboxes = calculate_route_bboxes(routes, params["network"]["map_margin_km"])
 
-    if args.multi_day:
-        if args.job_id and len(args.job_id) > len(build_multiday_payloads(routes_config, tomtom_config)):
-            parser.error("Há mais --job-id do que jobs na janela")
-        run_multiday(args, routes_config, tomtom_config)
-        return
-    if args.file and len(args.file) > 1:
-        parser.error("Vários arquivos em -f só funcionam com --multi-day")
-
-    if args.dry_run:
-        payload = build_route_analysis_payload(routes_config, tomtom_config)
-        print(f"[DRY RUN] Date: {payload['dateRanges'][0]['from']}")
-        print(f"[DRY RUN] Time zone: {payload['routes'][0]['zoneId']}")
-        print(f"[DRY RUN] Routes: {len(payload['routes'])}")
-        print(f"[DRY RUN] Hourly time sets: {len(payload['timeSets'])}")
-        for route in payload["routes"]:
-            print(f"[DRY RUN] {route['name']}")
-        return
-
-    print("=== Stage 1.1: TomTom Traffic Stats for target routes ===")
-    if args.file is None:
-        job_id, route_analysis = create_and_wait_for_route_analysis(
-            routes_config,
-            tomtom_config,
-        )
-    else:
-        print(f"Open JSON file: {args.file[0]}")
-        job_id, route_analysis = open_download_route_analysis(f"{CONF_DIR}/{args.file[0]}")
-
-    selected_date = tomtom_config["date_range"]["24h_data"]
-    calibration_data = normalize_route_analysis(
-        route_analysis,
-        routes_config,
-        selected_date,
-        tomtom_config.get("time_zone", "America/Sao_Paulo"),
-    )
-    bboxes = calculate_route_bboxes(calibration_data)
-    print("=== Stage 1.2: Route-centered OSM maps ===")
-    for topology, bbox in bboxes.items():
-        osm_path = download_osm_map(topology, bbox)
+    print("=== Etapa 1.1: redes OSM em volta dos trechos CET ===")
+    for topology, bbox in sorted(bboxes.items()):
+        file_topology = TOPOLOGY_FILE_NAMES.get(topology, topology)
+        if args.skip_netconvert:
+            continue
+        osm_path = OSM_DIR / f"{file_topology}.osm"
+        if not args.skip_download:
+            osm_path = download_osm_map(topology, bbox)
+        elif not osm_path.is_file():
+            raise FileNotFoundError(f"{osm_path} não existe; rode sem --skip-download")
         convert_osm_to_net(topology, osm_path)
 
-    edge_routes = build_topology_edge_routes(calibration_data)
-    for route_name, route_data in calibration_data["routes"].items():
-        route_data.update(edge_routes[route_data["topology"]][route_name])
-        route_data["sumo_edges"] = route_data.pop("edges")
-    calibration_data["job_id"] = job_id
-    calibration_data["map_bboxes"] = {key: list(value) for key, value in bboxes.items()}
-    calibration_data["hcm_flow_rates_veh_per_hour_per_lane"] = tomtom_config[
-        "hcm_flow_rates_veh_per_hour_per_lane"
-    ]
-    calibration_data["calibration_flow"] = tomtom_config.get("calibration_flow", "medium_flow")
-    with OUTPUT_CALIBRATION_PATH.open("w", encoding="utf-8") as output:
-        json.dump(calibration_data, output, indent=2)
-    print(f"[OK] Traffic Stats results saved to {OUTPUT_CALIBRATION_PATH}")
-    print(f"[INFO] TomTom job ID: {job_id}; date: {selected_date}; routes: {len(calibration_data['routes'])}")
+    print("=== Etapa 1.1: mapeamento das rotas CET na rede SUMO ===")
+    edge_routes = build_topology_edge_routes(routes, params["network"]["max_length_ratio_error"])
+    output_routes = {}
+    for name, route in sorted(routes.items()):
+        mapped = edge_routes[route["topology"]][name]
+        output_routes[name] = {
+            **{key: value for key, value in route.items() if key != "points"},
+            "points": route["points"],
+            "sumo_edges": mapped["edges"],
+            "lanes_per_direction": mapped["lanes_per_direction"],
+            "speed_limit_kmh": mapped["speed_limit_kmh"],
+            "sumo_length_m": mapped["sumo_length_m"],
+        }
+        print(f"[OK] {name}: {len(mapped['edges'])} arestas, {mapped['sumo_length_m']:.0f} m "
+              f"(CET {route.get('cet_distance_m', 0):.0f} m), {mapped['lanes_per_direction']} faixa(s), "
+              f"{mapped['speed_limit_kmh']:.0f} km/h")
+
+    output = {
+        "source": routes_config.get("source", "CET MSVP 2019"),
+        "map_bboxes": {topology: list(bbox) for topology, bbox in bboxes.items()},
+        "routes": output_routes,
+    }
+    SCENARIOS_OUTPUT_PATH.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[OK] Rotas CET mapeadas salvas em {SCENARIOS_OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

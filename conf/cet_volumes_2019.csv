@@ -1,37 +1,37 @@
-﻿fonte,via,pista,ponto,sentido,data,hora_inicio,faixa_horaria,automoveis,onibus_urbano,onibus_fretado,caminhoes,motos,bicicletas,total,topology,route,observacao
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,7,07:00-08:00,2057,123,1,9,421,18,2629,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,8,08:00-09:00,1910,107,0,10,584,25,2636,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,9,09:00-10:00,2225,115,1,7,561,20,2929,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,7,07:00-08:00,1805,128,2,4,517,39,2495,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,8,08:00-09:00,1660,100,1,1,490,43,2295,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,9,09:00-10:00,1750,100,0,2,328,42,2222,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,17,17:00-18:00,1944,109,2,9,655,52,2771,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,18,18:00-19:00,1748,95,2,6,688,44,2583,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,19,19:00-20:00,1956,96,1,3,482,51,2589,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,17,17:00-18:00,1755,141,5,18,393,37,2349,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,18,18:00-19:00,1830,133,6,14,558,38,2579,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,19,19:00-20:00,1469,108,2,12,472,41,2104,urban_road,urban_road_neighborhood,
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. da Cidade Universitaria,Castelo Branco,22/08/2019,7,07:00-08:00,4798,0,36,114,2,0,4950,highway,highway_downtown,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. da Cidade Universitaria,Castelo Branco,22/08/2019,8,08:00-09:00,4360,0,26,146,3,0,4535,highway,highway_downtown,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. da Cidade Universitaria,Castelo Branco,22/08/2019,9,09:00-10:00,4163,0,21,202,5,0,4391,highway,highway_downtown,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. da Cidade Universitaria,Castelo Branco,21/08/2019,17,17:00-18:00,5173,0,6,84,2,1,5266,highway,highway_downtown,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. da Cidade Universitaria,Castelo Branco,21/08/2019,18,18:00-19:00,4850,0,23,73,1,0,4947,highway,highway_downtown,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. da Cidade Universitaria,Castelo Branco,21/08/2019,19,19:00-20:00,4987,0,24,33,0,0,5044,highway,highway_downtown,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),expressa,Pte. da Cidade Universitaria,Interlagos,22/08/2019,7,07:00-08:00,7636,0,11,117,1712,2,9478,highway,highway_neighborhood,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),expressa,Pte. da Cidade Universitaria,Interlagos,22/08/2019,8,08:00-09:00,4503,1,26,127,1880,4,6541,highway,highway_neighborhood,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),expressa,Pte. da Cidade Universitaria,Interlagos,22/08/2019,9,09:00-10:00,3473,3,23,119,1418,0,5036,highway,highway_neighborhood,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),expressa,Pte. da Cidade Universitaria,Interlagos,21/08/2019,17,17:00-18:00,5377,2,17,58,1131,0,6585,highway,highway_neighborhood,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),expressa,Pte. da Cidade Universitaria,Interlagos,21/08/2019,18,18:00-19:00,4627,0,29,25,1329,0,6010,highway,highway_neighborhood,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),expressa,Pte. da Cidade Universitaria,Interlagos,21/08/2019,19,19:00-20:00,4341,2,28,33,845,0,5249,highway,highway_neighborhood,"Mapeamento ao trecho de rodovia assumido (Marginal Pinheiros, ponto mais proximo); confirmar. Caminhoes = soma das classes 2/3/4+ eixos"
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,21/08/2019,7,07:00-08:00,5324,0,16,81,1,0,5422,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,21/08/2019,8,08:00-09:00,4822,0,15,95,0,0,4932,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,21/08/2019,9,09:00-10:00,3155,0,6,154,0,0,3315,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,20/08/2019,17,17:00-18:00,4410,2,20,50,15,0,4497,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,20/08/2019,18,18:00-19:00,3596,2,6,37,13,0,3654,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),expressa,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,20/08/2019,19,19:00-20:00,3134,0,4,29,10,0,3177,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros,expressa,Pte. do Morumbi - Caio P. de Toledo,Interlagos,21/08/2019,7,07:00-08:00,4370,13,57,82,591,0,5113,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros,expressa,Pte. do Morumbi - Caio P. de Toledo,Interlagos,21/08/2019,8,08:00-09:00,3442,7,4,76,510,0,4039,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros,expressa,Pte. do Morumbi - Caio P. de Toledo,Interlagos,21/08/2019,9,09:00-10:00,2958,4,13,100,489,0,3564,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros,expressa,Pte. do Morumbi - Caio P. de Toledo,Interlagos,20/08/2019,17,17:00-18:00,4166,1,4,43,2517,0,6731,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros,expressa,Pte. do Morumbi - Caio P. de Toledo,Interlagos,20/08/2019,18,18:00-19:00,3988,0,0,21,3396,0,7405,highway,,Referencia; nao mapeado a rota
-CET MSVP 2019,Marginal Pinheiros,expressa,Pte. do Morumbi - Caio P. de Toledo,Interlagos,20/08/2019,19,19:00-20:00,3831,0,3,24,2352,0,6210,highway,,Referencia; nao mapeado a rota
+﻿fonte,via,ponto,sentido,data,hora_inicio,automoveis,onibus_urbano,onibus_fretado,caminhoes,motos,bicicletas,total,route,pagina,observacao
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Centro,26/04/2019,7,6941,102,10,7,1103,2,8165,highway_centro,113,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Centro,26/04/2019,8,6441,81,16,7,1266,2,7813,highway_centro,113,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Centro,26/04/2019,9,6552,88,15,14,1142,0,7811,highway_centro,113,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Centro,30/04/2019,17,5996,90,21,27,1290,1,7425,highway_centro,143,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Centro,30/04/2019,18,5208,69,17,10,1450,5,6759,highway_centro,143,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Centro,30/04/2019,19,6783,68,18,12,1074,1,7956,highway_centro,143,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Bairro,26/04/2019,7,7517,87,24,7,1419,1,9055,highway_bairro,114,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Bairro,26/04/2019,8,7322,70,13,16,1763,1,9185,highway_bairro,114,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Bairro,26/04/2019,9,6795,80,16,27,1327,2,8247,highway_bairro,114,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Bairro,30/04/2019,17,5987,77,15,6,1829,1,7915,highway_bairro,144,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Bairro,30/04/2019,18,6267,70,16,9,1707,3,8072,highway_bairro,144,
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Viad. Beneficencia Portuguesa,Bairro,30/04/2019,19,6204,60,10,8,971,1,7254,highway_bairro,144,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,7,2057,123,1,9,421,18,2629,urban_road_centro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,8,1910,107,0,10,584,25,2636,urban_road_centro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,9,2225,115,1,7,561,20,2929,urban_road_centro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,17,1944,109,2,9,655,52,2771,urban_road_centro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,18,1748,95,2,6,688,44,2583,urban_road_centro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Centro,27/03/2019,19,1956,96,1,3,482,51,2589,urban_road_centro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,7,1805,128,2,4,517,39,2495,urban_road_bairro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,8,1660,100,1,1,490,43,2295,urban_road_bairro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,9,1750,100,0,2,328,42,2222,urban_road_bairro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,17,1755,141,5,18,393,37,2349,urban_road_bairro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,18,1830,133,6,14,558,38,2579,urban_road_bairro,,
+CET MSVP 2019,"Consolacao, R. da",R. Caio Prado - R. Marques de Paranagua,Bairro,27/03/2019,19,1469,108,2,12,472,41,2104,urban_road_bairro,,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Centro,27/05/2019,7,1190,84,2,3,480,11,1770,intersection_main_centro,99,A tabela de hora pico (p. 65) traz outro dia (14/05/2019) com 4.635 veic/h no sentido Centro; usada a tabela por faixa horaria
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Centro,27/05/2019,8,1240,65,1,1,575,18,1900,intersection_main_centro,99,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Centro,27/05/2019,9,1440,47,0,1,479,23,1990,intersection_main_centro,99,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Centro,23/05/2019,17,1493,54,2,5,364,12,1930,intersection_main_centro,,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Centro,23/05/2019,18,1286,41,2,1,332,13,1675,intersection_main_centro,,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Centro,23/05/2019,19,1549,43,1,0,331,19,1943,intersection_main_centro,,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Bairro,27/05/2019,7,1357,54,7,4,193,7,1622,intersection_main_bairro,99,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Bairro,27/05/2019,8,1273,65,1,1,253,10,1603,intersection_main_bairro,99,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Bairro,27/05/2019,9,1215,54,0,8,258,6,1541,intersection_main_bairro,99,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Bairro,23/05/2019,17,1236,54,3,1,765,12,2071,intersection_main_bairro,,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Bairro,23/05/2019,18,1184,56,1,1,807,22,2071,intersection_main_bairro,,
+CET MSVP 2019,"Nove de Julho, Av.",R. Manuel Guedes - R. Emanuel Kant,Bairro,23/05/2019,19,1198,52,0,2,630,16,1898,intersection_main_bairro,,

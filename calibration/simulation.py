@@ -3,8 +3,11 @@
 Fila pontual: o tempo de viagem inclui o departDelay. Nas rotas cuja primeira aresta é curta e termina em
 semáforo, o veículo que espera inserção está, na prática, parado no primeiro vermelho; sem esse tempo a
 velocidade fica alta demais. O warm-up usa a partida pretendida (depart - departDelay), quando o veículo
-chega à fila. Ver a decisão da T2 em todo/calibracao_etapa1_tarefas.md.
+chega à fila. A velocidade comparável à da CET (carro-teste no trecho) é a velocidade média espacial
+das viagens: distância total / tempo total.
 """
+import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -18,9 +21,31 @@ except ImportError:
     from params import PROJECT_DIR
 
 sys.path.insert(0, str(PROJECT_DIR / "src"))
-from calibrate_stage1 import RAW_DATA_DIR, SUMO_BINARY, read_insertion_stats  # noqa: E402
 from generate_routes import SUMO_STEP_LENGTH, build_route_file, safe_id, tls_offsets_path  # noqa: E402
 from sumo_route_utils import network_path  # noqa: E402
+
+
+RAW_DATA_DIR = PROJECT_DIR / "results" / "rawData"
+SUMO_BINARY = os.environ.get("SUMO_BINARY") or shutil.which("sumo")
+
+
+def read_insertion_stats(tripinfo_path, statistic_path):
+    """Fila de inserção e teleportes de uma simulação."""
+    trips = ET.parse(tripinfo_path).getroot().findall("tripinfo")
+    delays = [float(trip.get("departDelay", 0)) for trip in trips]
+    statistics_root = ET.parse(statistic_path).getroot()
+    vehicles = statistics_root.find("vehicles")
+    teleports = statistics_root.find("teleports")
+    return {
+        "loaded": int(vehicles.get("loaded", 0)),
+        "inserted": int(vehicles.get("inserted", 0)),
+        "waiting_at_end": int(vehicles.get("waiting", 0)),
+        "teleports": int(teleports.get("total", 0)),
+        "completed_trips": len(trips),
+        # Atrasos de até um passo são quantização do instante de inserção, não fila.
+        "delayed_departures": sum(1 for delay in delays if delay > SUMO_STEP_LENGTH),
+        "max_depart_delay_s": max(delays, default=0.0),
+    }
 
 
 def read_trip_metrics(tripinfo_path, route_names, min_depart=0.0):

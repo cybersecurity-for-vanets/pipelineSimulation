@@ -7,6 +7,11 @@ import sys
 import numpy as np
 import pandas as pd
 
+try:
+    from .flow_levels import flow_level_ids, flow_per_lane, split_level
+except ImportError:
+    from flow_levels import flow_level_ids, flow_per_lane, split_level
+
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES (espelha analyze_stage4_results.py)
 # ==============================================================================
@@ -60,27 +65,27 @@ def parse_config(config_str):
     if not isinstance(config_str, str):
         return "Unknown", "Unknown", "Unknown"
 
-    # Exemplo: Config_highway_FF1_AES_high_flow
-    clean = config_str.replace("Config_", "")
+    # Exemplo: Config_highway_FF1_AES_h07 (o protocolo pode ter "_", então o nível sai pelo sufixo)
+    clean, level = split_level(config_str.removeprefix("Config_"))
 
     topologies = ["highway", "urbanRoad", "intersection"]
-    flows = ["low_flow", "medium_flow", "high_flow"]
 
     top_found = "Unknown"
     for t in topologies:
-        if clean.startswith(t):
+        if clean.startswith(t + "_"):
             top_found = t
             clean = clean[len(t) + 1:]
             break
 
-    flow_found = "Unknown"
-    for f in flows:
-        if clean.endswith(f):
-            flow_found = f
-            clean = clean[:-len(f) - 1]
-            break
+    return top_found, clean, level or "Unknown"
 
-    return top_found, clean, flow_found
+
+def scenario_flow_per_lane(topology, level):
+    """veh/h/faixa do nível na topologia (conf/flow_levels.json); NaN se o par não estiver lá."""
+    try:
+        return flow_per_lane(topology, level)
+    except KeyError:
+        return np.nan
 
 
 def aggregate_scalars(chunk_rows=500_000):
@@ -217,7 +222,18 @@ def summarize(per_run):
     grouped = long.groupby(["Topology", "Protocol", "Scenario", "Metric"])["Value"].agg(
         Mean="mean", Std="std", Count="count").reset_index()
     grouped["CI_95"] = 1.96 * grouped["Std"] / np.sqrt(grouped["Count"])
-    return grouped
+    flows = {key: scenario_flow_per_lane(*key)
+             for key in grouped[["Topology", "Scenario"]].drop_duplicates().itertuples(index=False)}
+    grouped["Flow per lane (veh/h/lane)"] = [flows[key] for key in zip(grouped["Topology"], grouped["Scenario"])]
+    return sort_by_level(grouped, ["Topology", "Protocol", "Scenario", "Metric"])
+
+
+def sort_by_level(frame, keys):
+    """Ordena pelas chaves com os níveis na ordem de conf/flow_levels.json (níveis desconhecidos no fim)."""
+    rank = {level: index for index, level in enumerate(flow_level_ids())}
+    return frame.sort_values(
+        keys, key=lambda column: column.map(rank).fillna(len(rank)) if column.name == "Scenario" else column,
+    ).reset_index(drop=True)
 
 
 # ==============================================================================
@@ -257,7 +273,7 @@ def main():
         rows.append({"run": run, "Topology": topology, "Protocol": protocol, "Scenario": scenario,
                      **run_metrics(run, totals, histograms, moments)})
 
-    per_run = pd.DataFrame(rows)
+    per_run = sort_by_level(pd.DataFrame(rows), ["Topology", "Protocol", "Scenario", "run"])
     per_run.to_csv(PER_RUN_CSV, index=False)
     summarize(per_run).to_csv(SUMMARY_CSV, index=False)
     print(f"[OK] Métricas por execução: '{PER_RUN_CSV}'")

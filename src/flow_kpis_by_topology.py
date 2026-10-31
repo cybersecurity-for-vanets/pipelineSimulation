@@ -5,9 +5,11 @@ import numpy as np
 import pandas as pd
 
 try:
+    from .flow_levels import flow_level_ids, load_flow_levels, split_level
     from .generate_stage2_configs import MEASUREMENT_S
     from .protocols import load_protocols
 except ImportError:
+    from flow_levels import flow_level_ids, load_flow_levels, split_level
     from generate_stage2_configs import MEASUREMENT_S
     from protocols import load_protocols
 
@@ -27,7 +29,7 @@ OUTPUT_DISTANCE_CSV = os.path.join(RESULTS_DIR, "rawData", "flow_kpis_by_distanc
 PLOTS_DIR = os.path.join(RESULTS_DIR, "plots", "flow_kpis")
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
-FLOWS = ["low_flow", "medium_flow", "high_flow"]
+FLOW_X = "Flow per lane (veh/h/lane)"
 PROTOCOLS = list(load_protocols())
 METRICS = ["PDR (%)", "CBR (%)", "Latency E2E (ms)"]
 
@@ -52,17 +54,15 @@ def parse_config(config_name):
     if not isinstance(config_name, str):
         return None
 
-    clean_name = config_name.removeprefix("Config_")
+    # Ex.: Config_highway_FF1_AES_h07 -> ("highway", "FF1_AES", "h07")
+    clean_name, flow = split_level(config_name.removeprefix("Config_"))
+    if flow is None:
+        return None
     topology = next((value for value in TOPOLOGIES if clean_name.startswith(value + "_")), None)
     if topology is None:
         return None
 
-    remainder = clean_name[len(topology) + 1:]
-    flow = next((value for value in FLOWS if remainder.endswith("_" + value)), None)
-    if flow is None:
-        return None
-
-    protocol = remainder[:-(len(flow) + 1)]
+    protocol = clean_name[len(topology) + 1:]
     return topology, protocol, flow
 
 
@@ -160,11 +160,28 @@ def summarize_distance(distance_runs):
     return summary.sort_values(keys).reset_index(drop=True)
 
 
+def flow_per_lane_by_scenario():
+    """veh/h/faixa de cada (topologia, nível), lido de conf/flow_levels.json (gravado por generate_routes.py).
+
+    É o volume CET observado na hora do nível, somado sobre as rotas da topologia e dividido pelas faixas.
+    """
+    topologies = load_flow_levels()["topologies"]
+    return {(topology, flow): values["veh_h_per_lane"]
+            for topology, levels in topologies.items() for flow, values in levels.items()}
+
+
+def with_flow_per_lane(frame, flow_per_lane):
+    frame = frame.copy()
+    keys = zip(frame["Topology"].astype(str), frame["Scenario"].astype(str))
+    frame["Flow per lane (veh/h/lane)"] = [flow_per_lane.get(key, np.nan) for key in keys]
+    return frame
+
+
 def ordered(frame):
     """Aplica a ordem de topologias, fluxos e protocolos (a mesma das listas do script)."""
     frame = frame.copy()
     frame["Topology"] = pd.Categorical(frame["Topology"], TOPOLOGIES, ordered=True)
-    frame["Scenario"] = pd.Categorical(frame["Scenario"], FLOWS, ordered=True)
+    frame["Scenario"] = pd.Categorical(frame["Scenario"], flow_level_ids(), ordered=True)
     frame["Protocol"] = pd.Categorical(frame["Protocol"], PROTOCOLS, ordered=True)
     return frame.sort_values(["Topology", "Scenario", "Protocol"]).reset_index(drop=True)
 
@@ -186,15 +203,16 @@ def summarize(run_kpis):
 # 4. GRÁFICO DE DISPERSÃO POR SEMENTE
 # ==============================================================================
 def plot_seed_scatter(run_kpis):
-    """Um gráfico por topologia: cada ponto é uma semente; a marca preta é a média do grupo."""
+    """Um gráfico por topologia: x = volume do nível (veh/h/faixa), cada ponto é uma semente; preto = média."""
     os.makedirs(PLOTS_DIR, exist_ok=True)
-    flow_position = {flow: index for index, flow in enumerate(FLOWS)}
-    spread = 0.2 / max(len(PROTOCOLS), 1)
 
     for topology in TOPOLOGIES:
-        data = run_kpis[run_kpis["Topology"] == topology]
+        data = run_kpis[(run_kpis["Topology"] == topology) & run_kpis[FLOW_X].notna()]
         if data.empty:
             continue
+        # Deslocamento horizontal entre protocolos: fração da faixa de volumes da topologia.
+        flows = data[FLOW_X].astype(float)
+        spread = 0.02 * max(flows.max() - flows.min(), flows.max() * 0.1) / max(len(PROTOCOLS), 1)
 
         figure, axes = plt.subplots(1, len(METRICS), figsize=(5 * len(METRICS), 4.5))
         for axis, metric in zip(axes, METRICS):
@@ -202,15 +220,14 @@ def plot_seed_scatter(run_kpis):
                 group = data[data["Protocol"] == protocol]
                 if group.empty:
                     continue
-                x = group["Scenario"].map(flow_position) + (offset - (len(PROTOCOLS) - 1) / 2) * spread
-                scatter = axis.scatter(x, group[metric], s=22, alpha=0.7, label=protocol)
+                shift = (offset - (len(PROTOCOLS) - 1) / 2) * spread
+                axis.scatter(group[FLOW_X] + shift, group[metric], s=22, alpha=0.7, label=protocol)
 
-                means = group.groupby("Scenario", observed=True)[metric].mean()
-                mean_x = [flow_position[flow] + (offset - (len(PROTOCOLS) - 1) / 2) * spread for flow in means.index]
-                axis.scatter(mean_x, means.values, marker="_", s=400, linewidths=2, color="black", zorder=3)
+                means = group.groupby(FLOW_X)[metric].mean()
+                axis.scatter(means.index + shift, means.values, marker="_", s=400, linewidths=2, color="black",
+                             zorder=3)
 
-            axis.set_xticks(range(len(FLOWS)))
-            axis.set_xticklabels(FLOWS)
+            axis.set_xlabel("Volume por faixa (veh/h/faixa)")
             axis.set_title(metric)
             axis.grid(True, linestyle=":", alpha=0.6)
 
@@ -240,7 +257,9 @@ def main():
         print(f"[AVISO] {without_pdr} execuções sem recepções PDR; elas ficam de fora da média de PDR.")
 
     print("[3/4] Agregando por topologia, fluxo e protocolo (média e IC 95%)...")
-    summary = summarize(run_kpis)
+    flow_per_lane = flow_per_lane_by_scenario()
+    run_kpis = with_flow_per_lane(run_kpis, flow_per_lane)
+    summary = with_flow_per_lane(summarize(run_kpis), flow_per_lane)
     summary.to_csv(OUTPUT_CSV, index=False, float_format="%.4f")
 
     seed_rows = ordered(run_kpis).sort_values(["Topology", "Scenario", "Protocol", "Seed"]).reset_index(drop=True)

@@ -12,10 +12,10 @@ TOPOLOGY_FILE_NAMES = {"urban_road": "urbanRoad"}
 # A connecting path may be at most DETOUR_RATIO * straight-line distance + DETOUR_SLACK_M long.
 DETOUR_RATIO = 1.5
 DETOUR_SLACK_M = 150
-# Candidate edges whose bearing differs from the TomTom travel direction by more than this are dropped.
+# Route end edges shorter than this (junction stubs) are dropped: a 5 m car cannot be inserted on them.
+MIN_END_EDGE_LENGTH_M = 20.0
+# Candidate edges whose bearing differs from the route's travel direction by more than this are dropped.
 MAX_HEADING_DIFF_DEG = 60
-# Mapped SUMO route length / TomTom segment length above this is reported as a warning.
-MAX_LENGTH_RATIO = 1.15
 
 
 def import_sumolib():
@@ -53,17 +53,6 @@ def load_network(topology, with_internal=False):
         raise FileNotFoundError(f"SUMO network does not exist: {path}")
     sumolib = import_sumolib()
     return sumolib.net.readNet(str(path), withInternal=with_internal), path
-
-
-def _shape_points(shape):
-    for point in shape or []:
-        if isinstance(point, dict):
-            longitude = point.get("longitude", point.get("lon"))
-            latitude = point.get("latitude", point.get("lat"))
-            if longitude is not None and latitude is not None:
-                yield float(longitude), float(latitude)
-        elif isinstance(point, (list, tuple)) and len(point) >= 2:
-            yield float(point[0]), float(point[1])
 
 
 def _edge_candidates(net, longitude, latitude, search_radius_m):
@@ -137,7 +126,7 @@ def _transition(net, previous_edge, previous_xy, xy, candidates, heading, enforc
 
 
 def _distinct_consecutive(points, xy_points):
-    """Drops points that repeat the previous one: TomTom repeats them at segment joins, and they have no travel direction."""
+    """Drops points that repeat the previous one: they have no travel direction."""
     kept = []
     for point, xy in zip(points, xy_points):
         if kept and math.dist(kept[-1][1], xy) < 1.0:
@@ -146,12 +135,8 @@ def _distinct_consecutive(points, xy_points):
     return [point for point, _ in kept], [xy for _, xy in kept]
 
 
-def map_route_segments_to_edges(net, segments, route_name, search_radius_m=100):
-    points = [
-        point
-        for segment in segments
-        for point in _shape_points(segment.get("shape_lon_lat"))
-    ]
+def map_route_points_to_edges(net, points, route_name, search_radius_m=100):
+    """SUMO edge ids of the passenger path through points, given as (longitude, latitude) in travel order."""
     xy_points = [net.convertLonLat2XY(longitude, latitude) for longitude, latitude in points]
     points, xy_points = _distinct_consecutive(points, xy_points)
     route_edges = []
@@ -162,7 +147,7 @@ def map_route_segments_to_edges(net, segments, route_name, search_radius_m=100):
         _, _, candidates = _edge_candidates(net, longitude, latitude, search_radius_m)
         if not candidates:
             raise ValueError(
-                f"No passenger SUMO edge within {search_radius_m}m of TomTom route '{route_name}' "
+                f"No passenger SUMO edge within {search_radius_m}m of route '{route_name}' "
                 f"at ({latitude:.6f}, {longitude:.6f})"
             )
 
@@ -175,12 +160,12 @@ def map_route_segments_to_edges(net, segments, route_name, search_radius_m=100):
             )
             if path is not None:
                 print(
-                    f"WARNING: TomTom route '{route_name}' has no connection within the detour limit "
+                    f"WARNING: route '{route_name}' has no connection within the detour limit "
                     f"near ({latitude:.6f}, {longitude:.6f}); using the shortest connection."
                 )
         if path is None:
             raise ValueError(
-                f"TomTom route '{route_name}' cannot be connected through SUMO passenger edges "
+                f"Route '{route_name}' cannot be connected through SUMO passenger edges "
                 f"near ({latitude:.6f}, {longitude:.6f})"
             )
         for path_edge in path:
@@ -191,7 +176,7 @@ def map_route_segments_to_edges(net, segments, route_name, search_radius_m=100):
 
     mapped_points = len(points)
     if len(route_edges) < 2 or mapped_points < 2:
-        raise ValueError(f"TomTom route '{route_name}' did not map to a traversable SUMO path")
+        raise ValueError(f"Route '{route_name}' did not map to a traversable SUMO path")
     return route_edges
 
 
@@ -210,7 +195,7 @@ def _junction_connector_length(net, previous, following):
 
 
 def trimmed_route_length(net, edge_ids, route_xy):
-    """Driven length of the SUMO path covered by the TomTom geometry.
+    """Driven length of the SUMO path between the route's first and last points.
 
     Junction connectors count, because vehicles drive through them; the first and last edges are cut at the end points.
     `net` must be loaded with internal lanes.
@@ -228,40 +213,66 @@ def trimmed_route_length(net, edge_ids, route_xy):
     return (edges[0].getLength() - start_offset) + middle + connectors + end_offset
 
 
-def build_topology_edge_routes(calibration_data):
+def trim_route_ends(net, edge_ids, min_edge_length_m=MIN_END_EDGE_LENGTH_M):
+    """Drops leading/trailing junction stubs and ramps from a mapped route.
+
+    A section endpoint at a junction often maps to a stub of a few metres created by --junctions.join, or to a
+    ramp (highway.*_link) next to the main carriageway. Vehicles cannot be inserted on a stub shorter than a car,
+    so the insertion queue grows without bound. Keeps at least two edges.
+    """
+    def droppable(edge_id, has_main):
+        edge = net.getEdge(edge_id)
+        is_link = edge.getType().endswith("_link")
+        return edge.getLength() < min_edge_length_m or (is_link and has_main)
+
+    has_main = any(not net.getEdge(edge_id).getType().endswith("_link") for edge_id in edge_ids)
+    edges = list(edge_ids)
+    while len(edges) > 2 and droppable(edges[0], has_main):
+        edges.pop(0)
+    while len(edges) > 2 and droppable(edges[-1], has_main):
+        edges.pop()
+    return edges
+
+
+def build_topology_edge_routes(routes, max_length_ratio_error):
+    """{topology: {route: {edges, lanes_per_direction, speed_limit_kmh, sumo_length_m}}}.
+
+    routes: {route: {"topology", "points": [[lat, lon], ...] in travel order, "cet_distance_m"}}. A SUMO length
+    farther than max_length_ratio_error (relative) from the CET section length is reported as a warning.
+    """
     by_topology = {}
-    for route_name, route_data in calibration_data.get("routes", {}).items():
+    for route_name, route_data in routes.items():
         by_topology.setdefault(route_data["topology"], []).append((route_name, route_data))
 
     edge_routes = {}
-    for topology, routes in by_topology.items():
+    for topology, topology_routes in by_topology.items():
         net, _ = load_network(topology)
-        driven_net = None
+        driven_net, _ = load_network(topology, with_internal=True)
         edge_routes[topology] = {}
-        for route_name, data in routes:
-            edge_ids = map_route_segments_to_edges(net, data.get("segments", []), route_name)
+        for route_name, data in topology_routes:
+            points = [(longitude, latitude) for latitude, longitude in data["points"]]
+            mapped_ids = map_route_points_to_edges(net, points, route_name)
+            edge_ids = trim_route_ends(net, mapped_ids)
+            if edge_ids != mapped_ids:
+                dropped = [edge for edge in mapped_ids if edge not in edge_ids]
+                print(f"[ROTA] {route_name}: {len(dropped)} aresta(s) de ponta removida(s) (tocos de junção ou alças): {dropped}")
             edges = [net.getEdge(edge_id) for edge_id in edge_ids]
             lane_count = max(1, round(statistics.median(edge.getLaneNumber() for edge in edges)))
             speed_limits = [edge.getSpeed() * 3.6 for edge in edges if edge.getSpeed() > 0]
             if not speed_limits:
                 raise ValueError(f"SUMO route '{route_name}' has no usable speed limits")
-            route_xy = [
-                net.convertLonLat2XY(longitude, latitude)
-                for segment in data.get("segments", [])
-                for longitude, latitude in _shape_points(segment.get("shape_lon_lat"))
-            ]
-            if driven_net is None:
-                driven_net, _ = load_network(topology, with_internal=True)
+            route_xy = [net.convertLonLat2XY(longitude, latitude) for longitude, latitude in points]
             sumo_length = trimmed_route_length(driven_net, edge_ids, route_xy)
-            tomtom_length = sum(segment.get("distance_m") or 0 for segment in data.get("segments", []))
-            if tomtom_length and sumo_length / tomtom_length > MAX_LENGTH_RATIO:
+            cet_length = data.get("cet_distance_m")
+            if cet_length and abs(sumo_length / cet_length - 1) > max_length_ratio_error:
                 print(
-                    f"WARNING: SUMO route '{route_name}' is {sumo_length:.0f} m for a TomTom route of "
-                    f"{tomtom_length:.0f} m (ratio {sumo_length / tomtom_length:.2f}); the map match may be detouring."
+                    f"[AVISO] Rota SUMO '{route_name}' tem {sumo_length:.0f} m para um trecho CET de "
+                    f"{cet_length:.0f} m (razão {sumo_length / cet_length:.2f}); confira os pontos em conf/routes.json."
                 )
             edge_routes[topology][route_name] = {
                 "edges": edge_ids,
                 "lanes_per_direction": lane_count,
                 "speed_limit_kmh": statistics.median(speed_limits),
+                "sumo_length_m": round(sumo_length, 1),
             }
     return edge_routes

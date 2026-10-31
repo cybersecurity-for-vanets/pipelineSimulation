@@ -9,12 +9,14 @@ try:
         CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
         PAIRED_SUMMARY_CSV, SUMMARY_CSV,
     )
+    from .flow_levels import flow_level_ids, level_label
     from .protocols import load_protocols
 except ImportError:
     from plot_kpi_charts import (
         CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
         PAIRED_SUMMARY_CSV, SUMMARY_CSV,
     )
+    from flow_levels import flow_level_ids, level_label
     from protocols import load_protocols
 
 
@@ -29,7 +31,6 @@ OUTPUT_PNG = os.path.join(PLOTS_DIR, "kpi_heatmaps.png")
 OUTPUT_PDF = os.path.join(PLOTS_DIR, "kpi_heatmaps.pdf")
 
 TOPOLOGY_ORDER = ["highway", "urbanRoad", "intersection"]
-FLOW_ORDER = ["low_flow", "medium_flow", "high_flow"]
 PROTOCOL_ORDER = list(load_protocols())
 
 
@@ -59,15 +60,26 @@ def draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric=False
         ax.figure.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
 
 
+def row_label(topology, flow):
+    try:
+        return f"{topology} / {level_label(flow)}"
+    except ValueError:
+        return f"{topology} / {flow}"
+
+
 def build_panels(summary, paired):
-    row_labels = [f"{topology} / {flow}" for topology in TOPOLOGY_ORDER for flow in FLOW_ORDER]
+    # Uma linha por (topologia, nível horário); o rótulo usa a hora (ex. "highway / 07h–08h").
+    row_labels = [row_label(topology, flow) for topology in TOPOLOGY_ORDER for flow in flow_level_ids()]
+
+    def with_rows(frame):
+        return frame.assign(Row=[row_label(t, f) for t, f in zip(frame["Topology"], frame["Scenario"])])
 
     def run_level(kpi):
-        rows = summary[summary["KPI"] == kpi].assign(Row=lambda d: d["Topology"] + " / " + d["Scenario"])
+        rows = with_rows(summary[summary["KPI"] == kpi])
         return rows.pivot_table(index="Row", columns="Protocol", values="Mean", aggfunc="first")
 
     def paired_level(kpi):
-        rows = paired[paired["KPI"] == kpi].assign(Row=lambda d: d["Topology"] + " / " + d["Scenario"])
+        rows = with_rows(paired[paired["KPI"] == kpi])
         return rows.pivot_table(index="Row", columns="Protocol", values="MeanDiff", aggfunc="first")
 
     return row_labels, [
@@ -92,7 +104,7 @@ def generate_heatmaps(summary, paired):
     if exported:
         pd.concat(exported, ignore_index=True).to_csv(VALUES_CSV, index=False)
 
-    figure, axes = plt.subplots(2, 3, figsize=(20, 11), constrained_layout=True)
+    figure, axes = plt.subplots(2, 3, figsize=(20, max(11, 0.45 * len(row_labels) * 2 + 2)), constrained_layout=True)
     for ax, (title, values, cmap, symmetric) in zip(axes.flat, panels):
         draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric)
     figure.suptitle("FF1 protocols versus baseline: processing cost, channel load and paired deltas", fontsize=14)

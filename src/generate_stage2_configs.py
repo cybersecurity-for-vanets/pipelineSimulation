@@ -6,13 +6,14 @@ import xml.etree.ElementTree as ET
 try:
     from .protocols import load_cam_model, load_crypto_timings, load_protocols
     from .generate_routes import SUMO_STEP_LENGTH
+    from .flow_levels import flow_level_ids, level_label
 except ImportError:
     from protocols import load_cam_model, load_crypto_timings, load_protocols
     from generate_routes import SUMO_STEP_LENGTH
+    from flow_levels import flow_level_ids, level_label
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENARIOS_CONF_PATH = os.path.join(BASE_DIR, "conf", "coordinates_scenaries.json")
-TOMTOM_CONF_PATH = os.path.join(BASE_DIR, "conf", "tomtom.json")
 TRAFFIC_DIR = os.path.join(BASE_DIR, "trafficXmlFiles")
 INI_OUTPUT_PATH = os.path.join(BASE_DIR, "conf", "omnetpp.ini")
 
@@ -61,8 +62,8 @@ def get_topology_bounds(topology):
 def generate_omnetpp_ini():
     with open(SCENARIOS_CONF_PATH, "r", encoding="utf-8") as f:
         scenarios = list(json.load(f).keys())
-    with open(TOMTOM_CONF_PATH, "r", encoding="utf-8") as f:
-        flows = list(json.load(f)["hcm_flow_rates_veh_per_hour_per_lane"].keys())
+    # Um nível por hora observada pela CET (h07, h08, ...), na ordem de conf/flow_levels.json.
+    flows = flow_level_ids()
     protocols = load_protocol_profiles()
     cam_model = load_cam_model()
     total_configs = len(scenarios) * len(protocols) * len(flows)
@@ -217,7 +218,7 @@ network = RSUExampleScenario
                 
                 ini_content += f"""
 # ------------------------------------------------------------------------------
-# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | Fluxo HCM: {flow}
+# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | Fluxo CET {level_label(flow)} ({flow})
 # ------------------------------------------------------------------------------
 [Config {config_name}]
 description = "{top} - {proto_name} - {flow}"

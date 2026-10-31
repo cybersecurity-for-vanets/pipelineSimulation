@@ -1,96 +1,58 @@
 {
-  "tomtom": {
-    "days_of_week": ["MON", "TUE", "WED", "THU", "FRI"],
-    "exclude_dates": []
+  "cet": {
+    "pce": {
+      "automoveis": 1.0,
+      "onibus_urbano": 1.5,
+      "onibus_fretado": 1.5,
+      "caminhoes": 1.5,
+      "motos": 0.4,
+      "bicicletas": 0.0
+    },
+    "calibration_hours": [17, 18, 19],
+    "validation_hours": [7, 8, 9],
+    "flow_level_hours": [7, 8, 9, 17, 18, 19]
+  },
+  "network": {
+    "map_margin_km": 0.4,
+    "max_length_ratio_error": 0.15
   },
   "topologies": {
-    "signal_coordinated": ["urban_road", "intersection"],
-    "speed_factor": ["highway"]
-  },
-  "speed_factor": {
-    "interval": [0.5, 1.0]
+    "signal_coordinated": ["urban_road", "intersection"]
   },
   "flow": {
     "min_veh_h": 50,
     "max_veh_h_per_lane": 2000,
     "tolerance_kmh": 1.0,
-    "max_iterations": 12,
-    "stability_seeds": [1, 2, 3]
+    "max_iterations": 12
   },
-  "replicas": {
-    "seeds": [1, 2, 3, 4, 5]
+  "simulation": {
+    "seconds": 3600,
+    "warmup_s": 600,
+    "search_seeds": [1],
+    "report_seeds": [1, 2, 3]
   },
   "acceptance": {
     "max_depart_delay_s": 90,
     "max_waiting_fraction": 0.01
   },
-  "sensitivity": {
-    "method": "morris",
-    "trajectories": 8,
-    "levels": 4,
-    "seeds": [1, 2, 3],
-    "sampler_seed": 1,
-    "flow_relative_range": [0.8, 1.2],
-    "min_effect_kmh": 1.0,
-    "min_effect_cv": 0.02,
-    "noise_multiplier": 2
-  },
-  "joint": {
-    "speed_dev": {"default": 0.1, "bounds": [0.05, 0.3]},
-    "seeds": [1, 2, 3],
-    "flow_bracket": [0.67, 1.5],
-    "speed_factor_bracket": 0.15,
-    "sampler_seed": 1,
-    "n_trials": 30,
-    "n_startup_trials": 10,
-    "stagnation_patience": 8,
-    "target_max_cv_error": 0.03,
-    "infeasible_penalty": 1.0
-  },
-  "simulation": {
-    "seconds": 3600,
-    "warmup_s": 600
-  },
-  "checks": {
-    "max_length_ratio_error": 0.05,
-    "window_s": 600,
-    "cutoffs_s": [0, 600, 1200, 1800]
-  },
-  "validation": {
-    "fraction": 0.3333,
-    "seed": 1
-  },
-  "segments": {
-    "min_normalized_sample_size": 0.05,
-    "min_valid_cells": 10,
-    "seeds": [1, 2, 3],
-    "fcd_period_s": 1.0,
-    "max_projection_distance_m": 15
-  },
-  "dispersion": {
-    "metric": "travel_time_cv"
-  },
-  "target": {
-    "regimes": {
-      "peak": {"hours": [6, 7, 8, 15, 16, 17]},
-      "off_peak": {"hours": [9, 10, 11, 12, 13, 14]}
-    },
-    "aggregation": "arithmetic",
-    "min_normalized_sample_size": 0.05
-  },
   "krauss": {
-    "default": {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5},
+    "default": {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5, "speedFactor": 1.0, "speedDev": 0.1},
     "bounds": {
       "accel": [1.0, 3.5],
       "decel": [1.5, 4.5],
       "tau": [0.5, 2.0],
       "sigma": [0.0, 1.0],
-      "minGap": [1.0, 3.5]
+      "minGap": [1.0, 3.5],
+      "speedFactor": [0.5, 1.0],
+      "speedDev": [0.05, 0.3]
     },
     "sampler_seed": 1,
-    "n_trials": 25,
-    "n_startup_trials": 10,
-    "stagnation_patience": 5,
+    "n_trials": 40,
+    "n_startup_trials": 12,
+    "stagnation_patience": 10,
     "target_relative_rmse": 0.10
+  },
+  "execution": {
+    "max_workers": 6
   }
 }

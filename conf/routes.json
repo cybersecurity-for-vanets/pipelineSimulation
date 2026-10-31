@@ -1,46 +1,84 @@
 {
-    "scenarios": {
-        "highway": {
-            "downtown": {
-                "start_coordinates": [-23.652265, -46.722180],
-                "end_coordinates": [-23.643552, -46.725266]
-            },
-            "neighborhood": {
-                "start_coordinates": [-23.644716, -46.727439],
-                "end_coordinates": [-23.652411, -46.725454]
-            }
+  "source": "CET MSVP 2019 (docs/relatorio-msvp-2019-revisao-2-junho-22.pdf); pontos [lat, lon] em ordem de viagem, tirados do OSM nas extremidades dos trechos de velocidade",
+  "topologies": {
+    "highway": {
+      "name": "Av. 23 de Maio, Vd. Brig. Luís Antônio – Vd. do Paraíso",
+      "routes": {
+        "highway_centro": {
+          "via": "Av. Vinte e Três de Maio",
+          "sentido": "Centro",
+          "trecho": "Vd. Paraíso → Vd. Brig. Luís Antônio",
+          "cet_distance_m": 2498,
+          "demand": "cet_volume",
+          "points": [[-23.573494, -46.640869], [-23.565971, -46.640573], [-23.558831, -46.638825], [-23.551790, -46.637157]]
         },
-        "urban_road": {
-            "downtown": {
-                "start_coordinates": [-23.555591, -46.662701],
-                "end_coordinates": [-23.547502, -46.647512]
-            },
-            "neighborhood": {
-                "start_coordinates": [-23.54726, -46.64731],
-                "end_coordinates": [-23.55555, -46.66289] 
-            }
-        },
-        "intersection": {
-            "main_street":{
-                "downtown": {
-                    "start_coordinates": [-23.588860, -46.728426],
-                    "end_coordinates": [-23.585070, -46.719822]
-                },
-                "neighborhood": {
-                    "start_coordinates": [-23.584888, -46.719688],
-                    "end_coordinates": [-23.588747, -46.728523]
-                }
-            },
-            "cross_street": {
-                "downtown": {
-                    "start_coordinates": [-23.58290, -46.72504],
-                    "end_coordinates": [-23.589531, -46.722587]
-                },
-                "neighborhood": {
-                    "start_coordinates": [-23.58964, -46.72235],
-                    "end_coordinates": [-23.58277, -46.72498]
-                }
-            }
+        "highway_bairro": {
+          "via": "Av. Vinte e Três de Maio",
+          "sentido": "Bairro",
+          "trecho": "Vd. Brig. Luís Antônio → Vd. Paraíso",
+          "cet_distance_m": 2498,
+          "demand": "cet_volume",
+          "points": [[-23.551790, -46.637157], [-23.558831, -46.638825], [-23.565957, -46.640852], [-23.573494, -46.640869]]
         }
+      }
+    },
+    "urban_road": {
+      "name": "R. da Consolação, Av. Paulista – R. Rêgo Freitas",
+      "routes": {
+        "urban_road_centro": {
+          "via": "R. da Consolação",
+          "sentido": "Centro",
+          "trecho": "Av. Paulista → R. Rêgo Freitas",
+          "cet_distance_m": 1922,
+          "demand": "cet_volume",
+          "points": [[-23.555657, -46.662785], [-23.551426, -46.656549], [-23.548012, -46.649014], [-23.547337, -46.646932]]
+        },
+        "urban_road_bairro": {
+          "via": "R. da Consolação",
+          "sentido": "Bairro",
+          "trecho": "R. Rêgo Freitas → Av. Paulista",
+          "cet_distance_m": 1922,
+          "demand": "cet_volume",
+          "points": [[-23.547337, -46.646932], [-23.548012, -46.649014], [-23.551426, -46.656549], [-23.555657, -46.662785]]
+        }
+      }
+    },
+    "intersection": {
+      "name": "Av. Nove de Julho × Av. São Gabriel",
+      "routes": {
+        "intersection_main_centro": {
+          "via": "Av. Nove de Julho",
+          "sentido": "Centro",
+          "trecho": "Av. Cidade Jardim → Av. São Gabriel",
+          "cet_distance_m": 1351,
+          "demand": "cet_volume",
+          "points": [[-23.580605, -46.683614], [-23.580644, -46.680146], [-23.579013, -46.676549], [-23.577005, -46.671309]]
+        },
+        "intersection_main_bairro": {
+          "via": "Av. Nove de Julho",
+          "sentido": "Bairro",
+          "trecho": "Av. São Gabriel → Av. Cidade Jardim",
+          "cet_distance_m": 1351,
+          "demand": "cet_volume",
+          "points": [[-23.577005, -46.671309], [-23.579013, -46.676549], [-23.580644, -46.680146], [-23.580605, -46.683614]]
+        },
+        "intersection_cross_centro": {
+          "via": "Av. São Gabriel",
+          "sentido": "Centro",
+          "trecho": "Av. Antônio J. de M. Andrade → Av. Nove de Julho",
+          "cet_distance_m": 907,
+          "demand": "speed_bisection",
+          "points": [[-23.583443, -46.670473], [-23.579934, -46.670680], [-23.577005, -46.671309]]
+        },
+        "intersection_cross_bairro": {
+          "via": "Av. São Gabriel",
+          "sentido": "Bairro",
+          "trecho": "Av. Nove de Julho → Av. Antônio J. de M. Andrade",
+          "cet_distance_m": 902,
+          "demand": "speed_bisection",
+          "points": [[-23.577005, -46.671309], [-23.579934, -46.670680], [-23.583443, -46.670473], [-23.585342, -46.670215]]
+        }
+      }
     }
+  }
 }

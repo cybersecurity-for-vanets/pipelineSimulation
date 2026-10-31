@@ -7,8 +7,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 try:
+    from .flow_levels import flow_level_ids, flow_per_lane, level_label, split_level
     from .protocols import load_protocols
 except ImportError:
+    from flow_levels import flow_level_ids, flow_per_lane, level_label, split_level
     from protocols import load_protocols
 
 # ==============================================================================
@@ -80,28 +82,28 @@ def parse_config(config_str):
     if not isinstance(config_str, str):
         return "Unknown", "Unknown", "Unknown"
     
-    # Exemplo: Config_highway_FF1_AES_high_flow
-    clean = config_str.replace("Config_", "")
-    
+    # Exemplo: Config_highway_FF1_AES_h07 (o protocolo pode ter "_", então o nível sai pelo sufixo)
+    clean, level = split_level(config_str.removeprefix("Config_"))
+
     topologies = ["highway", "urbanRoad", "intersection"]
-    flows = ["low_flow", "medium_flow", "high_flow"]
-    
+
     top_found = "Unknown"
     for t in topologies:
-        if clean.startswith(t):
+        if clean.startswith(t + "_"):
             top_found = t
             clean = clean[len(t)+1:]
             break
-            
-    flow_found = "Unknown"
-    for f in flows:
-        if clean.endswith(f):
-            flow_found = f
-            clean = clean[:-len(f)-1]
-            break
-            
+
     protocol_found = clean  # Restante é o protocolo (ex: baseline, FF1_AES)
-    return top_found, protocol_found, flow_found
+    return top_found, protocol_found, level or "Unknown"
+
+
+def scenario_flow_per_lane(topology, level):
+    """veh/h/faixa do nível na topologia (conf/flow_levels.json); NaN se o par não estiver lá."""
+    try:
+        return flow_per_lane(topology, level)
+    except KeyError:
+        return np.nan
 
 def aggregate_export(chunk_rows=500_000):
     """Stream the (possibly tens of GB) scavetool CSV keeping only per-(run, scalar) sum, sum of squares and count."""
@@ -158,6 +160,9 @@ def process_metrics():
 
     # Cálculo do Intervalo de Confiança de 95%
     grouped['CI_95'] = 1.96 * (grouped['Std'] / np.sqrt(grouped['Count'].replace(0, np.nan)))
+    flows = {key: scenario_flow_per_lane(*key)
+             for key in grouped[['Topology', 'Scenario']].drop_duplicates().itertuples(index=False)}
+    grouped['Flow per lane (veh/h/lane)'] = [flows[key] for key in zip(grouped['Topology'], grouped['Scenario'])]
 
     grouped.to_csv(SUMMARY_CSV, index=False)
     print(f"[OK] Resumo estatístico salvo em: '{SUMMARY_CSV}'")
@@ -176,7 +181,7 @@ def sort_protocols(values):
 def generate_plots(summary):
     print("[3/4] Gerando gráficos para a dissertação...")
 
-    scenarios_order = ["low_flow", "medium_flow", "high_flow"]
+    scenarios_order = flow_level_ids()
     # procBin_* are histogram bins, plotted by plot_processing_histograms instead.
     is_bin = summary['name'].str.startswith(PROCESSING_BIN_PREFIX)
     available_metrics = summary.loc[~is_bin, 'name'].unique()
@@ -201,7 +206,7 @@ def generate_plots(summary):
         protocols = sort_protocols(metric_data['Protocol'].unique())
         grouped = metric_data.set_index(['Topology', 'Scenario', 'Protocol'])
         bar_width = 0.8 / max(len(protocols), 1)
-        fig, ax = plt.subplots(figsize=(1.6 * len(topologies) * (len(flows) + 1), 4.5))
+        fig, ax = plt.subplots(figsize=(0.9 * len(topologies) * (len(flows) + 1), 4.5))
         handles = {}
         tick_positions, tick_labels, group_centers = [], [], []
 
@@ -210,7 +215,7 @@ def generate_plots(summary):
             for f_index, flow in enumerate(flows):
                 position = base + f_index
                 tick_positions.append(position)
-                tick_labels.append(flow.replace("_flow", ""))
+                tick_labels.append(level_label(flow))
                 for protocol_index, protocol in enumerate(protocols):
                     key = (topology, flow, protocol)
                     if key in grouped.index:
@@ -235,13 +240,13 @@ def generate_plots(summary):
                     handles.setdefault(protocol, bars[0])
             group_centers.append(base + (len(flows) - 1) / 2)
 
-        ax.set_xticks(tick_positions, tick_labels)
+        ax.set_xticks(tick_positions, tick_labels, rotation=45, ha="right")
         for center, topology in zip(group_centers, topologies):
             ax.annotate(
                 topology,
                 xy=(center, 0),
                 xycoords=("data", "axes fraction"),
-                xytext=(0, -38),
+                xytext=(0, -52),
                 textcoords="offset points",
                 ha="center",
                 va="top",
@@ -263,7 +268,7 @@ def plot_processing_histograms(summary):
     """One figure with a histogram of processing latency per topology and flow, one curve per protocol."""
     print("[3/4] Gerando histogramas de latência de processamento...")
 
-    scenarios_order = ["low_flow", "medium_flow", "high_flow"]
+    scenarios_order = flow_level_ids()
     bins = summary[summary['name'].str.startswith(PROCESSING_BIN_PREFIX)].copy()
     if bins.empty:
         print("[AVISO] Nenhum procBin_* encontrado para histograma.")
@@ -322,7 +327,7 @@ def plot_processing_histograms(summary):
             if row == 0:
                 ax.set_title(topology)
             if col == 0:
-                ax.set_ylabel(flow)
+                ax.set_ylabel(level_label(flow))
             if row == len(flows) - 1:
                 ax.set_xlabel("Latência de processamento (ms)")
 

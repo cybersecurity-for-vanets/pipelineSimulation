@@ -9,11 +9,13 @@ try:
     from .kpi_statistics import (
         equivalence_tests, load_margins, paired_differences, summarize_differences,
     )
+    from .flow_levels import flow_level_ids, flow_per_lane, level_label, split_level
     from .protocols import load_protocols
 except ImportError:
     from kpi_statistics import (
         equivalence_tests, load_margins, paired_differences, summarize_differences,
     )
+    from flow_levels import flow_level_ids, flow_per_lane, level_label, split_level
     from protocols import load_protocols
 
 
@@ -30,7 +32,7 @@ PAIRED_SUMMARY_CSV = os.path.join(RESULTS_DIR, "paired_summary.csv")
 EQUIVALENCE_CSV = os.path.join(RESULTS_DIR, "equivalence_tests.csv")
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
-FLOWS = ["low_flow", "medium_flow", "high_flow"]
+FLOW_X = "Flow per lane (veh/h/lane)"
 PROTOCOLS = list(load_protocols())
 BASELINE_PROTOCOL = "baseline"
 
@@ -86,18 +88,24 @@ def parse_config(config_name):
     if not isinstance(config_name, str):
         return None
 
-    clean_name = config_name.removeprefix("Config_")
+    # Ex.: Config_highway_FF1_AES_h07 -> ("highway", "FF1_AES", "h07")
+    clean_name, flow = split_level(config_name.removeprefix("Config_"))
+    if flow is None:
+        return None
     topology = next((value for value in TOPOLOGIES if clean_name.startswith(value + "_")), None)
     if topology is None:
         return None
 
-    remainder = clean_name[len(topology) + 1:]
-    flow = next((value for value in FLOWS if remainder.endswith("_" + value)), None)
-    if flow is None:
-        return None
-
-    protocol = remainder[:-(len(flow) + 1)]
+    protocol = clean_name[len(topology) + 1:]
     return topology, protocol, flow
+
+
+def scenario_flow_per_lane(topology, flow):
+    """veh/h/faixa do nível na topologia (conf/flow_levels.json); NaN se o par não estiver lá."""
+    try:
+        return flow_per_lane(topology, flow)
+    except KeyError:
+        return np.nan
 
 
 def aggregate_export(chunk_rows=500_000):
@@ -261,6 +269,9 @@ def load_run_kpis():
         ["Topology", "Protocol", "Scenario", "KPI"], as_index=False
     )["Value"].agg(Mean="mean", Std="std", N="count")
     summary["CI95"] = 1.96 * summary["Std"].fillna(0) / np.sqrt(summary["N"])
+    flows = {key: scenario_flow_per_lane(*key)
+             for key in summary[["Topology", "Scenario"]].drop_duplicates().itertuples(index=False)}
+    summary[FLOW_X] = [flows[key] for key in zip(summary["Topology"], summary["Scenario"])]
     return run_values, summary
 
 
@@ -282,17 +293,18 @@ def save_figure(figure, filename):
 
 
 def plot_bars(summary):
+    flows = flow_level_ids()
     metrics = summary["KPI"].unique()
     for metric in metrics:
-        figure, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), squeeze=False)
+        figure, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(18, 4.5), squeeze=False)
         legend_handles = []
         for ax, topology in zip(axes[0], TOPOLOGIES):
             data = summary[(summary["Topology"] == topology) & (summary["KPI"] == metric)]
             protocols = [value for value in PROTOCOLS if value in data["Protocol"].unique()]
-            positions = np.arange(len(FLOWS))
+            positions = np.arange(len(flows))
             width = 0.8 / max(len(protocols), 1)
             for protocol_index, protocol in enumerate(protocols):
-                values = data[data["Protocol"] == protocol].set_index("Scenario").reindex(FLOWS)
+                values = data[data["Protocol"] == protocol].set_index("Scenario").reindex(flows)
                 offset = (protocol_index - (len(protocols) - 1) / 2) * width
                 bars = ax.bar(
                     positions + offset,
@@ -305,7 +317,7 @@ def plot_bars(summary):
                 if topology == TOPOLOGIES[0]:
                     legend_handles.append(bars)
             ax.set_title(topology)
-            ax.set_xticks(positions, FLOWS, rotation=15)
+            ax.set_xticks(positions, [level_label(flow) for flow in flows], rotation=45, ha="right")
             ax.set_ylabel(metric)
             ax.grid(axis="y", alpha=0.3)
         figure.suptitle(f"{metric}: média por repetição com IC 95%")
@@ -315,6 +327,8 @@ def plot_bars(summary):
 
 
 def plot_lines(summary):
+    """Uma linha por protocolo sobre o volume observado de cada nível (veh/h/faixa) na topologia do painel."""
+    flows = flow_level_ids()
     metrics = summary["KPI"].unique()
     for metric in metrics:
         figure, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), squeeze=False)
@@ -322,12 +336,15 @@ def plot_lines(summary):
         for ax, topology in zip(axes[0], TOPOLOGIES):
             data = summary[(summary["Topology"] == topology) & (summary["KPI"] == metric)]
             for protocol in PROTOCOLS:
-                values = data[data["Protocol"] == protocol].set_index("Scenario").reindex(FLOWS)
-                if values["Mean"].notna().any():
-                    line = ax.errorbar(FLOWS, values["Mean"], yerr=values["CI95"], marker="o", capsize=2, label=protocol)
+                values = data[data["Protocol"] == protocol].set_index("Scenario").reindex(flows)
+                values = values.assign(x=[scenario_flow_per_lane(topology, flow) for flow in flows])
+                values = values.dropna(subset=["Mean", "x"]).sort_values("x")
+                if not values.empty:
+                    line = ax.errorbar(values["x"], values["Mean"], yerr=values["CI95"], marker="o", capsize=2, label=protocol)
                     if topology == TOPOLOGIES[0]:
-                        legend_handles.append(line[0])
+                        legend_handles.append(line)
             ax.set_title(topology)
+            ax.set_xlabel("Volume por faixa (veh/h/faixa)")
             ax.set_ylabel(metric)
             ax.grid(alpha=0.3)
         figure.suptitle(f"Tendência por fluxo: {metric}")

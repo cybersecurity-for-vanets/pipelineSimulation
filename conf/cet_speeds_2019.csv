@@ -1,67 +1,49 @@
-﻿fonte,via,pista,trecho_de,trecho_ate,sentido,distancia_m,mes_ano,hora_inicio,faixa_horaria,velocidade_kmh,topology,route,observacao
-CET MSVP 2019,"Consolacao, R. da",geral,Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,7,07:00-08:00,26.1,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,8,08:00-09:00,25.6,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,9,09:00-10:00,27.8,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,17,17:00-18:00,8.2,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,18,18:00-19:00,7.7,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,19,19:00-20:00,11.5,urban_road,urban_road_downtown,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,7,07:00-08:00,20.2,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,8,08:00-09:00,14.2,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,9,09:00-10:00,10.7,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,17,17:00-18:00,19.4,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,18,18:00-19:00,13.3,urban_road,urban_road_neighborhood,
-CET MSVP 2019,"Consolacao, R. da",geral,R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,19,19:00-20:00,14.5,urban_road,urban_road_neighborhood,
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. Joao Dias,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,4080,dez-19,7,07:00-08:00,39.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. Joao Dias,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,4080,dez-19,8,08:00-09:00,26.1,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. Joao Dias,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,4080,dez-19,9,09:00-10:00,22.4,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. Joao Dias,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,4080,dez-19,17,17:00-18:00,38.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. Joao Dias,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,4080,dez-19,18,18:00-19:00,42.5,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. Joao Dias,Pte. do Morumbi - Caio P. de Toledo,Castelo Branco,4080,dez-19,19,19:00-20:00,46.6,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. do Morumbi - Caio P. de Toledo,Pte. Eng. Roberto Rossi Zuccolo,Castelo Branco,3670,dez-19,7,07:00-08:00,30.1,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. do Morumbi - Caio P. de Toledo,Pte. Eng. Roberto Rossi Zuccolo,Castelo Branco,3670,dez-19,8,08:00-09:00,25.8,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. do Morumbi - Caio P. de Toledo,Pte. Eng. Roberto Rossi Zuccolo,Castelo Branco,3670,dez-19,9,09:00-10:00,26.5,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. do Morumbi - Caio P. de Toledo,Pte. Eng. Roberto Rossi Zuccolo,Castelo Branco,3670,dez-19,17,17:00-18:00,15.3,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. do Morumbi - Caio P. de Toledo,Pte. Eng. Roberto Rossi Zuccolo,Castelo Branco,3670,dez-19,18,18:00-19:00,5.8,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. das Nacoes Unidas),local,Pte. do Morumbi - Caio P. de Toledo,Pte. Eng. Roberto Rossi Zuccolo,Castelo Branco,3670,dez-19,19,19:00-20:00,13.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (R. Hungria),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. Eusebio Matoso,Castelo Branco,1940,dez-19,7,07:00-08:00,39.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (R. Hungria),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. Eusebio Matoso,Castelo Branco,1940,dez-19,8,08:00-09:00,42.3,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (R. Hungria),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. Eusebio Matoso,Castelo Branco,1940,dez-19,9,09:00-10:00,31.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (R. Hungria),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. Eusebio Matoso,Castelo Branco,1940,dez-19,17,17:00-18:00,8.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (R. Hungria),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. Eusebio Matoso,Castelo Branco,1940,dez-19,18,18:00-19:00,17.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (R. Hungria),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. Eusebio Matoso,Castelo Branco,1940,dez-19,19,19:00-20:00,18.1,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Eusebio Matoso,Pte. Cidade Universitaria,Castelo Branco,2050,dez-19,7,07:00-08:00,49.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Eusebio Matoso,Pte. Cidade Universitaria,Castelo Branco,2050,dez-19,8,08:00-09:00,46.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Eusebio Matoso,Pte. Cidade Universitaria,Castelo Branco,2050,dez-19,9,09:00-10:00,49.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Eusebio Matoso,Pte. Cidade Universitaria,Castelo Branco,2050,dez-19,17,17:00-18:00,32.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Eusebio Matoso,Pte. Cidade Universitaria,Castelo Branco,2050,dez-19,18,18:00-19:00,21.3,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Eusebio Matoso,Pte. Cidade Universitaria,Castelo Branco,2050,dez-19,19,19:00-20:00,33.5,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Cidade Universitaria,Pte. do Jaguare,Castelo Branco,2710,dez-19,7,07:00-08:00,51.6,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Cidade Universitaria,Pte. do Jaguare,Castelo Branco,2710,dez-19,8,08:00-09:00,50.3,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Cidade Universitaria,Pte. do Jaguare,Castelo Branco,2710,dez-19,9,09:00-10:00,49.8,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Cidade Universitaria,Pte. do Jaguare,Castelo Branco,2710,dez-19,17,17:00-18:00,52.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Cidade Universitaria,Pte. do Jaguare,Castelo Branco,2710,dez-19,18,18:00-19:00,54.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. D. Ruth Cardoso),local,Pte. Cidade Universitaria,Pte. do Jaguare,Castelo Branco,2710,dez-19,19,19:00-20:00,51.1,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),local,Pte. do Jaguare,Pte. Cidade Universitaria,Interlagos,2790,dez-19,7,07:00-08:00,26.4,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),local,Pte. do Jaguare,Pte. Cidade Universitaria,Interlagos,2790,dez-19,8,08:00-09:00,20.0,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),local,Pte. do Jaguare,Pte. Cidade Universitaria,Interlagos,2790,dez-19,9,09:00-10:00,14.3,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),local,Pte. do Jaguare,Pte. Cidade Universitaria,Interlagos,2790,dez-19,17,17:00-18:00,58.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),local,Pte. do Jaguare,Pte. Cidade Universitaria,Interlagos,2790,dez-19,18,18:00-19:00,44.8,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Eng. Billings),local,Pte. do Jaguare,Pte. Cidade Universitaria,Interlagos,2790,dez-19,19,19:00-20:00,60.5,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Cidade Universitaria,Pte. Eusebio Matoso,Interlagos,1870,dez-19,7,07:00-08:00,33.5,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Cidade Universitaria,Pte. Eusebio Matoso,Interlagos,1870,dez-19,8,08:00-09:00,15.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Cidade Universitaria,Pte. Eusebio Matoso,Interlagos,1870,dez-19,9,09:00-10:00,15.6,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Cidade Universitaria,Pte. Eusebio Matoso,Interlagos,1870,dez-19,17,17:00-18:00,46.4,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Cidade Universitaria,Pte. Eusebio Matoso,Interlagos,1870,dez-19,18,18:00-19:00,40.3,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Cidade Universitaria,Pte. Eusebio Matoso,Interlagos,1870,dez-19,19,19:00-20:00,48.8,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eusebio Matoso,Pte. Eng. Roberto Rossi Zuccolo,Interlagos,1900,dez-19,7,07:00-08:00,46.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eusebio Matoso,Pte. Eng. Roberto Rossi Zuccolo,Interlagos,1900,dez-19,8,08:00-09:00,14.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eusebio Matoso,Pte. Eng. Roberto Rossi Zuccolo,Interlagos,1900,dez-19,9,09:00-10:00,19.4,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eusebio Matoso,Pte. Eng. Roberto Rossi Zuccolo,Interlagos,1900,dez-19,17,17:00-18:00,52.2,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eusebio Matoso,Pte. Eng. Roberto Rossi Zuccolo,Interlagos,1900,dez-19,18,18:00-19:00,29.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eusebio Matoso,Pte. Eng. Roberto Rossi Zuccolo,Interlagos,1900,dez-19,19,19:00-20:00,29.6,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. do Morumbi - Caio P. de Toledo,Interlagos,3710,dez-19,7,07:00-08:00,42.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. do Morumbi - Caio P. de Toledo,Interlagos,3710,dez-19,8,08:00-09:00,34.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. do Morumbi - Caio P. de Toledo,Interlagos,3710,dez-19,9,09:00-10:00,35.0,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. do Morumbi - Caio P. de Toledo,Interlagos,3710,dez-19,17,17:00-18:00,18.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. do Morumbi - Caio P. de Toledo,Interlagos,3710,dez-19,18,18:00-19:00,9.9,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
-CET MSVP 2019,Marginal Pinheiros (Av. Magalhaes de Castro),local,Pte. Eng. Roberto Rossi Zuccolo,Pte. do Morumbi - Caio P. de Toledo,Interlagos,3710,dez-19,19,19:00-20:00,14.7,highway,,Medido nas pistas locais (nao na expressa) em dez/2019; nao comparavel a velocidade da expressa
+﻿fonte,via,trecho_de,trecho_ate,sentido,distancia_m,mes_ano,hora_inicio,tempo_percurso,velocidade_kmh,route
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Paraiso,Vd. Brig. Luis Antonio,Centro,2498,mai-19,7,03:05,48.6,highway_centro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Paraiso,Vd. Brig. Luis Antonio,Centro,2498,mai-19,8,03:15,46.1,highway_centro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Paraiso,Vd. Brig. Luis Antonio,Centro,2498,mai-19,9,03:31,42.6,highway_centro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Paraiso,Vd. Brig. Luis Antonio,Centro,2498,mai-19,17,03:11,47.0,highway_centro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Paraiso,Vd. Brig. Luis Antonio,Centro,2498,mai-19,18,06:00,25.0,highway_centro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Paraiso,Vd. Brig. Luis Antonio,Centro,2498,mai-19,19,05:17,28.4,highway_centro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Brig. Luis Antonio,Vd. Paraiso,Bairro,2498,mai-19,7,04:15,35.3,highway_bairro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Brig. Luis Antonio,Vd. Paraiso,Bairro,2498,mai-19,8,05:33,27.0,highway_bairro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Brig. Luis Antonio,Vd. Paraiso,Bairro,2498,mai-19,9,06:14,24.0,highway_bairro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Brig. Luis Antonio,Vd. Paraiso,Bairro,2498,mai-19,17,04:00,37.5,highway_bairro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Brig. Luis Antonio,Vd. Paraiso,Bairro,2498,mai-19,18,04:12,35.8,highway_bairro
+CET MSVP 2019,"Vinte e Tres de Maio, Av.",Vd. Brig. Luis Antonio,Vd. Paraiso,Bairro,2498,mai-19,19,03:23,44.3,highway_bairro
+CET MSVP 2019,"Consolacao, R. da",Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,7,04:26,26.1,urban_road_centro
+CET MSVP 2019,"Consolacao, R. da",Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,8,04:30,25.6,urban_road_centro
+CET MSVP 2019,"Consolacao, R. da",Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,9,04:09,27.8,urban_road_centro
+CET MSVP 2019,"Consolacao, R. da",Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,17,14:00,8.2,urban_road_centro
+CET MSVP 2019,"Consolacao, R. da",Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,18,14:56,7.7,urban_road_centro
+CET MSVP 2019,"Consolacao, R. da",Av. Paulista,R. Rego Freitas,Centro,1922,mar-19,19,10:02,11.5,urban_road_centro
+CET MSVP 2019,"Consolacao, R. da",R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,7,05:43,20.2,urban_road_bairro
+CET MSVP 2019,"Consolacao, R. da",R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,8,08:07,14.2,urban_road_bairro
+CET MSVP 2019,"Consolacao, R. da",R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,9,10:47,10.7,urban_road_bairro
+CET MSVP 2019,"Consolacao, R. da",R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,17,05:56,19.4,urban_road_bairro
+CET MSVP 2019,"Consolacao, R. da",R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,18,08:39,13.3,urban_road_bairro
+CET MSVP 2019,"Consolacao, R. da",R. Rego Freitas,Av. Paulista,Bairro,1922,mar-19,19,07:57,14.5,urban_road_bairro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Cidade Jardim,Av. Sao Gabriel,Centro,1351,jun-19,7,03:52,21.0,intersection_main_centro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Cidade Jardim,Av. Sao Gabriel,Centro,1351,jun-19,8,07:41,10.5,intersection_main_centro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Cidade Jardim,Av. Sao Gabriel,Centro,1351,jun-19,9,08:44,9.3,intersection_main_centro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Cidade Jardim,Av. Sao Gabriel,Centro,1351,jun-19,17,10:22,7.8,intersection_main_centro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Cidade Jardim,Av. Sao Gabriel,Centro,1351,jun-19,18,09:22,8.7,intersection_main_centro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Cidade Jardim,Av. Sao Gabriel,Centro,1351,jun-19,19,09:41,8.4,intersection_main_centro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Sao Gabriel,Av. Cidade Jardim,Bairro,1351,jun-19,7,05:29,14.8,intersection_main_bairro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Sao Gabriel,Av. Cidade Jardim,Bairro,1351,jun-19,8,06:59,11.6,intersection_main_bairro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Sao Gabriel,Av. Cidade Jardim,Bairro,1351,jun-19,9,05:19,15.2,intersection_main_bairro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Sao Gabriel,Av. Cidade Jardim,Bairro,1351,jun-19,17,35:44,2.3,intersection_main_bairro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Sao Gabriel,Av. Cidade Jardim,Bairro,1351,jun-19,18,35:58,2.3,intersection_main_bairro
+CET MSVP 2019,"Nove de Julho, Av.",Av. Sao Gabriel,Av. Cidade Jardim,Bairro,1351,jun-19,19,07:06,11.4,intersection_main_bairro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Antonio J. de M. Andrade,Av. Nove de Julho,Centro,907,mai-19,7,02:52,19.0,intersection_cross_centro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Antonio J. de M. Andrade,Av. Nove de Julho,Centro,907,mai-19,8,02:36,20.9,intersection_cross_centro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Antonio J. de M. Andrade,Av. Nove de Julho,Centro,907,mai-19,9,03:25,16.0,intersection_cross_centro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Antonio J. de M. Andrade,Av. Nove de Julho,Centro,907,mai-19,17,03:05,17.6,intersection_cross_centro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Antonio J. de M. Andrade,Av. Nove de Julho,Centro,907,mai-19,18,03:04,17.7,intersection_cross_centro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Antonio J. de M. Andrade,Av. Nove de Julho,Centro,907,mai-19,19,02:46,19.7,intersection_cross_centro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Nove de Julho,Av. Antonio J. de M. Andrade,Bairro,902,mai-19,7,02:46,19.5,intersection_cross_bairro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Nove de Julho,Av. Antonio J. de M. Andrade,Bairro,902,mai-19,8,02:00,26.9,intersection_cross_bairro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Nove de Julho,Av. Antonio J. de M. Andrade,Bairro,902,mai-19,9,02:23,22.6,intersection_cross_bairro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Nove de Julho,Av. Antonio J. de M. Andrade,Bairro,902,mai-19,17,04:35,11.8,intersection_cross_bairro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Nove de Julho,Av. Antonio J. de M. Andrade,Bairro,902,mai-19,18,03:41,14.7,intersection_cross_bairro
+CET MSVP 2019,"Sao Gabriel, Av.",Av. Nove de Julho,Av. Antonio J. de M. Andrade,Bairro,902,mai-19,19,04:24,12.3,intersection_cross_bairro

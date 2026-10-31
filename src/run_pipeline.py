@@ -25,13 +25,13 @@ def run_step(step_name, script_name):
 def main():
     print("==================================================")
     print(" INICIANDO PIPELINE COMPLETO DE SIMULAÇÃO (VANET)")
-    print(" Matriz: 3 Topologias x 3 Densidades x 4 Protocolos")
+    print(" Matriz: 3 Topologias x 6 Níveis horários (CET) x 4 Protocolos")
     print(" Protocolos: baseline, FF1-AES, FF1-LEA, FF1-SPECK")
-    print(" Total: 36 Configurações | 1080 Simulações OMNeT++")
+    print(" Total: 72 Configurações | 720 Simulações OMNeT++ (10 seeds)")
     print("==================================================")
 
     # Etapa 1: Dados históricos, calibração de Krauss e rotas SUMO
-    run_step("Etapa 1.1 - Redes OSM e Traffic Stats TomTom", "fetch_data.py")
+    run_step("Etapa 1.1 - Redes OSM e rotas CET", "fetch_data.py")
     run_step("Etapa 1.2 - Microcalibração Krauss por topologia", "calibrate_stage1.py")
     run_step("Etapa 1.3 - Geração das rotas SUMO calibradas", "generate_routes.py")
 
@@ -41,7 +41,7 @@ def main():
     # Etapa 2: Regerar omnetpp.ini e Estruturas de Configuração
     run_step("Etapa 2 - Configurações OMNeT++", "generate_stage2_configs.py")
 
-    # Etapa 3: Execução Paralela no Apple M1 (36 configs x 30 seeds)
+    # Etapa 3: Execução Paralela no Apple M1 (72 configs x 10 seeds)
     # run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3.py")
     run_step("Etapa 3 - Orquestração de Simulações", "orchestrate_stage3_baseline.py")
 
