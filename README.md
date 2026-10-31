@@ -1,8 +1,14 @@
 # Pipeline de Simulação VANET (SUMO + Veins + OMNeT++)
 
-Pipeline para avaliar o impacto da cifração com preservação de formato **FF1** (NIST SP 800-38G) em mensagens V2X (CAM) sobre cenários de tráfego reais calibrados com dados da TomTom e da CET-SP.
+Pipeline para avaliar o impacto da cifração com preservação de formato **FF1** (NIST SP 800-38G) em mensagens V2X (CAM) sobre cenários de tráfego reais calibrados só com os dados da CET-SP (relatório MSVP 2019 de volumes e velocidades).
 
-A matriz experimental é **3 topologias** (`highway`, `urbanRoad`, `intersection`) × **3 densidades** (`low_flow`, `medium_flow`, `high_flow`) × **4 protocolos**, com 30 repetições (sementes) por configuração: 36 configurações e 1080 simulações.
+A matriz experimental é **3 topologias** (`highway`, `urbanRoad`, `intersection`) × **níveis de fluxo** × **4 protocolos**, com 10 repetições (sementes) por configuração. Os níveis observados são os volumes CET de cada ano e hora pesquisados (`y2019h07` = 2019, 07h–08h; anos 2016–2019, horas 7–9h e 17–19h). Os níveis sintéticos (`s025`, `s050`, `s075`, `s125`) são múltiplos do fluxo médio de 2019 e cobrem volumes que a CET não pesquisou. São 22 níveis na highway, 22 na urban_road e 10 na intersection: 54 cenários, 216 configurações e 2.160 simulações.
+
+| Topologia | Trecho CET | Demanda |
+| --- | --- | --- |
+| `highway` | Av. 23 de Maio, Vd. Brig. Luís Antônio – Vd. Paraíso (2.498 m), dois sentidos | Contagem no Viad. Beneficência Portuguesa |
+| `urbanRoad` | R. da Consolação, Av. Paulista – R. Rêgo Freitas (1.922 m), dois sentidos | Contagem entre R. Caio Prado e R. Marquês de Paranaguá |
+| `intersection` | Av. Nove de Julho (Av. Cidade Jardim – Av. São Gabriel, 1.351 m) × Av. São Gabriel (Av. Nove de Julho – Av. Antônio J. de M. Andrade, ~905 m), dois sentidos | Nove de Julho: contagem entre R. Manuel Guedes e R. Emanuel Kant; São Gabriel: sem contagem, fluxo inferido da velocidade CET |
 
 | Protocolo | Descrição |
 | --- | --- |
@@ -46,7 +52,6 @@ python src/run_pipeline.py
 - Python com `requests`, `optuna`, `pandas`, `numpy`, `matplotlib`
 - SUMO (`sumo`, `netconvert` e `sumolib`; `SUMO_HOME` configurado)
 - OMNeT++ 6.2 e Veins 5.3.1 — os caminhos estão fixos em `orchestrate_stage3.py` e `analyze_stage4_results.py` (`OPP_RUN`, `VEINS_*`, `SCAVETOOL_BIN`) e devem ser ajustados para a máquina local
-- Chave da API TomTom (lida por `tomtom_traffic_stats.py`)
 
 ## Etapas do pipeline
 
@@ -55,30 +60,30 @@ fetch_data ─► calibrate_stage1 ─► generate_routes ─► benchmark_crypt
  (Etapa 1.1)     (Etapa 1.2)         (Etapa 1.3)         (Etapa 2.0)            (Etapa 2)                 (Etapa 3)               (Etapa 4)
 ```
 
-### Etapa 1.1 — `fetch_data.py`: dados de tráfego e redes viárias
+Todos os parâmetros da Etapa 1 ficam em `conf/calibration_params.json`, lido e validado só por `calibration/params.py` (`python calibration/params.py` valida o arquivo).
 
-- Lê `conf/tomtom.json` e `conf/routes.json` e cria um job *Route Analysis* na API TomTom Traffic Stats para um dia histórico, com velocidades hora a hora por rota.
-- Calcula uma *bounding box* por topologia (rotas + margem de 2 km), baixa o mapa via Overpass API (`osmFiles/<topologia>.osm`) e converte para rede SUMO com `netconvert` (`osmFiles/<topologia>.net.xml`).
-- Mapeia os segmentos de cada rota TomTom para *edges* da rede SUMO (`sumo_route_utils.py`).
-- Saída: `conf/tomtom_calibrated_rates.json` (velocidades, edges SUMO, fluxos HCM e bounding boxes).
+### Etapa 1.1 — `fetch_data.py`: redes viárias e rotas CET
 
-Opções:
+- Lê `conf/routes.json`: um trecho CET por rota e sentido, com pontos `[lat, lon]` em ordem de viagem.
+- Calcula uma *bounding box* por topologia (pontos + `network.map_margin_km`), baixa só as vias pelo Overpass (`osmFiles/<topologia>.osm`) e, se todos os servidores falharem, pela API do OSM em blocos. Converte para rede SUMO com `netconvert` (`osmFiles/<topologia>.net.xml`).
+- Mapeia cada rota para *edges* da rede SUMO (`sumo_route_utils.py`) e avisa quando o comprimento no SUMO se afasta do trecho CET mais que `network.max_length_ratio_error`.
+- Saída: `conf/cet_scenarios.json`. `--skip-download` reaproveita os `.osm`; `--skip-netconvert` só refaz o mapeamento.
 
-- `--dry-run`: mostra o resumo da requisição sem chamadas de rede.
-- `-f/--file <arquivo>`: reutiliza um resultado TomTom já baixado em `conf/` em vez de criar um novo job.
+### Etapa 1.2 — `calibrate_stage1.py`: calibração com a CET
 
-### Etapa 1.2 — `calibrate_stage1.py`: calibração do modelo Krauss
+Volume e velocidade vêm dos relatórios MSVP 2016–2019 (`conf/cet_volumes.csv` e `conf/cet_speeds.csv`, lidos por `cet_data.py`). O método segue Khaleghian et al. (2023): calibra no pico da tarde de 2019 (`cet.calibration`) e valida em todos os outros níveis com velocidade CET. Detalhes em [`docs/calibracao_etapa1.md`](docs/calibracao_etapa1.md).
 
-- Para cada topologia, otimiza os parâmetros do modelo de seguimento Krauss (`accel`, `decel`, `tau`, `sigma`, `minGap`) com Optuna (TPE, 50 trials).
-- Cada trial executa o SUMO (1 h simulada, 10 min de aquecimento) e mede o RMSE entre as velocidades simuladas e as velocidades-alvo da TomTom:
-  - **com contagens CET**: injeta os fluxos horários da CET 2019 (`conf/cet_volumes_2019.csv`, convertidos em carros equivalentes) e compara com a velocidade TomTom da mesma hora; valida também contra `conf/cet_speeds_2019.csv`;
-  - **sem contagens CET**: usa o fluxo HCM de calibração e a velocidade média de 24 h.
-- As simulações horárias rodam em paralelo (`SUMO_WORKERS`, padrão até 4; `SUMO_BINARY` permite trocar o executável).
-- Saída: `conf/krauss_calibration.json`.
+- **Demanda:** o fluxo de cada rota é o volume CET da hora em equivalente-carro (`cet.pce`). A Av. São Gabriel não tem contagem: o fluxo dela é achado por bisseção contra a velocidade CET de cada hora.
+- **Semáforos:** em `topologies.signal_coordinated`, offsets de onda verde do `tlsCoordinator.py` do SUMO, ponderados pelo fluxo médio da tarde (`osmFiles/<topologia>.tls_offsets.add.xml`).
+- **Krauss:** um perfil por topologia (`krauss.bounds`, inclusive `speedFactor` e `speedDev`), escolhido por TPE (Optuna) para minimizar o RMSE da velocidade nas horas de calibração. O primeiro trial é `krauss.default`.
+- **Relatório:** simula as 6 horas com `simulation.report_seeds` e separa RMSE/MAE/viés de calibração e de validação.
+- `--topology` calibra só algumas topologias; `--trials N` faz um teste curto. `SUMO_BINARY` permite trocar o executável.
+- Saídas: `conf/route_flows_calibrated.json` (fluxo por rota e hora) e `conf/krauss_calibration.json` (perfil e relatório).
 
 ### Etapa 1.3 — `generate_routes.py`: rotas SUMO
 
-- Para cada topologia e cada nível de fluxo HCM, gera `trafficXmlFiles/<topologia>_<fluxo>.rou.xml` (fluxos nas rotas TomTom com o perfil Krauss calibrado, ou o padrão se não houver calibração) e o respectivo `.sumocfg`.
+- Para cada topologia, gera `trafficXmlFiles/<topologia>_<nível>.rou.xml` e o `.sumocfg` (com os offsets de semáforo, quando existem) de cada nível observado e de cada fator de `cet.synthetic`.
+- Grava `conf/flow_levels.json`: a lista de níveis, os rótulos (`07h–08h`) e o fluxo total e por faixa de cada topologia e nível. Esse arquivo é o contrato com as Etapas 2–4 e os gráficos (ver `src/flow_levels.py`).
 
 ### Etapa 2.0 — `benchmark_crypto.py`: tempos do FF1
 
@@ -92,7 +97,7 @@ Medir antes, e não durante a simulação, mantém as simulações reprodutívei
 ### Etapa 2 — `generate_stage2_configs.py`: configuração OMNeT++/Veins
 
 - Gera um `conf/scenario_<topologia>_<fluxo>.launchd.xml` por cenário, apontando para o `.sumocfg` correspondente.
-- Gera `conf/omnetpp.ini` com uma configuração por combinação topologia × fluxo × protocolo: área (*playground*) calculada a partir dos limites da rede SUMO, parâmetros PHY/MAC 802.11p, beacons de 1 s, cifra (`cryptoCipher`), overhead e atrasos medidos de cada protocolo (lidos de `conf/protocols.json` e `conf/crypto_timings.json`), `sim-time-limit = 600s` e `repeat = 30`.
+- Gera `conf/omnetpp.ini` com uma configuração por combinação topologia × fluxo × protocolo: área (*playground*) calculada a partir dos limites da rede SUMO, parâmetros PHY/MAC 802.11p, beacons de 1 s, cifra (`cryptoCipher`), overhead e atrasos medidos de cada protocolo (lidos de `conf/protocols.json` e `conf/crypto_timings.json`), `sim-time-limit` = aquecimento + medição (`WARMUP_S` + `MEASUREMENT_S`) e `repeat = 10`. Os níveis de fluxo vêm de `conf/flow_levels.json`.
 
 ### Etapa 3 — `orchestrate_stage3.py`: execução das simulações
 
@@ -111,13 +116,12 @@ Medir antes, e não durante a simulação, mantém as simulações reprodutívei
 
 | Script | Função |
 | --- | --- |
-| `tomtom_traffic_stats.py` | Cliente da API TomTom Traffic Stats: monta o *payload* de Route Analysis, aguarda o job, baixa o resultado e normaliza as velocidades por rota/hora. Usado por `fetch_data.py`. |
-| `sumo_route_utils.py` | Carrega o `sumolib` e as redes SUMO; faz o *map matching* das geometrias TomTom para sequências de edges. |
+| `sumo_route_utils.py` | Carrega o `sumolib` e as redes SUMO; faz o *map matching* dos pontos de cada trecho CET para sequências de edges. |
+| `cet_data.py` | Lê `conf/cet_volumes.csv` e `conf/cet_speeds.csv` e converte as contagens classificadas em equivalente-carro (`cet.pce`). |
+| `flow_levels.py` | Contrato dos níveis de fluxo (`y2019h07`, `s050`): ids, rótulos, tipo e leitura de `conf/flow_levels.json`. |
 | `protocols.py` | `load_protocols()` e `load_crypto_timings()`: leem `conf/protocols.json` e `conf/crypto_timings.json`. |
-| `reference_data.py` | Lê os dados da CET 2019 (`conf/cet_volumes_2019.csv` e `conf/cet_speeds_2019.csv`) e converte contagens classificadas em carros equivalentes (auto 1,0; ônibus/caminhão 1,5; moto 0,4). |
 | `plot_kpi_charts.py` | A partir de `scavetool_export.csv`, calcula KPIs por repetição e gera barras com IC 95% (inclusive *Latency vs baseline (ms)*), tendências por fluxo, boxplots de latência e dispersão CBR × latência em `results/plots/kpi_charts/`. |
 | `generate_kpi_heatmaps.py` | A partir de `final_metrics_summary.csv`, gera *heatmaps* de KPIs (BSMs recebidos, CBR, latência e atrasos criptográficos) por topologia/fluxo × protocolo em `results/plots/kpi_heatmaps.{png,pdf}`. |
 | `inspect_network.py` | Lista os edges (não internos) de `conf/network.net.xml` para inspeção rápida. |
-| `test.py` | Rascunho para testar a API TomTom Flow Segment. Não faz parte do pipeline. |
 
 `plot_kpi_charts.py` e `generate_kpi_heatmaps.py` não são chamados por `run_pipeline.py`; execute-os manualmente após a Etapa 4.

@@ -5,14 +5,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.ticker import NullFormatter, ScalarFormatter
 
-from plot_common import (COLORS, FLOW_LABELS, FLOWS, METRIC_AXIS_LABELS, METRIC_FILE_NAMES, METRIC_TITLES,
-                         PROTOCOLS, RAW_DATA_DIR, RESULTS_DIR, TOPOLOGIES, protocol_marker, save)
+from plot_common import (COLORS, FLOW_X, METRIC_AXIS_LABELS, METRIC_FILE_NAMES, METRIC_TITLES,
+                         PROTOCOLS, RAW_DATA_DIR, RESULTS_DIR, TOPOLOGIES, level_origin_handles,
+                         plot_level_series, protocol_marker, save, scatter_levels, synthetic_mask)
+from level_style import SYNTHETIC_FACE, SYNTHETIC_LINE_ALPHA
 
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
 # ==============================================================================
 SEED_CSV = os.path.join(RAW_DATA_DIR, "flow_kpis_per_seed.csv")
+SUMMARY_CSV = os.path.join(RAW_DATA_DIR, "flow_kpis_by_topology.csv")
 DISTANCE_CSV = os.path.join(RAW_DATA_DIR, "flow_kpis_by_distance.csv")
 PLOTS_DIR = os.path.join(RESULTS_DIR, "plots", "flow_kpis")
 
@@ -23,11 +27,13 @@ CBR_METRICS = ["PDR (%)", "Latency E2E (ms)"]
 
 # Protocolo: estilo da linha de tendência (o marcador já identifica os pontos).
 PROTOCOL_LINESTYLES = ["-", "--", ":", "-.", (0, (5, 1)), (0, (3, 1, 1, 1))]
-# Fluxo: estilo da linha nas curvas por distância.
-FLOW_LINESTYLES = {"low_flow": ":", "medium_flow": "--", "high_flow": "-"}
+# Curvas por distância: com ~28 níveis por topologia, só três níveis representativos (menor, mediano e maior
+# veh/h/faixa da topologia) são desenhados; o estilo da linha identifica qual deles.
+REPRESENTATIVE_LEVELS = [("menor volume", ":"), ("volume mediano", "--"), ("maior volume", "-")]
 CBR_BINS = 12           # faixas de CBR da curva média (todas as topologias juntas)
 MIN_POINTS_PER_BIN = 3  # faixas com menos execuções ficam de fora da curva
 DISTANCE_BIN_M = 50     # largura das faixas de distância (LatencyTraCIDemo11p.h)
+LEGEND_MAX_COLUMNS = 3  # colunas por legenda: legendas maiores quebram em mais linhas e cabem no modo separado
 
 
 def protocol_linestyle(protocol):
@@ -65,14 +71,14 @@ def binned_mean(x, y, bins):
 
 
 def draw_points(axis, data, x_column, metric):
-    """Um ponto por execução: cor = topologia, marcador = protocolo."""
+    """Um ponto por execução: cor = topologia, marcador = protocolo; vazado = nível sintético."""
     for topology in present(data["Topology"], TOPOLOGIES):
         for protocol in present(data["Protocol"], PROTOCOLS):
             group = data[(data["Topology"] == topology) & (data["Protocol"] == protocol)]
             if group.empty:
                 continue
-            axis.scatter(group[x_column], group[metric], s=18, alpha=0.55, color=COLORS[topology],
-                         marker=protocol_marker(protocol), linewidths=0)
+            scatter_levels(axis, group[x_column], group[metric], group["Scenario"], s=18, alpha=0.55,
+                           color=COLORS[topology], marker=protocol_marker(protocol))
 
 
 def draw_density(axis, data, metric):
@@ -110,21 +116,59 @@ def draw_cbr(axis, data, metric):
     axis.grid(True, linestyle=":", alpha=0.6)
 
 
+def draw_flow_per_lane(axis, data, metric):
+    """G: média e IC 95% de cada nível × veh/h/faixa; uma linha por topologia e protocolo, ligando os níveis em ordem
+    de volume. Nível sintético: marcador vazado e segmento esmaecido."""
+    for topology in present(data["Topology"], TOPOLOGIES):
+        for protocol in present(data["Protocol"], PROTOCOLS):
+            group = data[(data["Topology"] == topology) & (data["Protocol"] == protocol)]
+            if group.empty:
+                continue
+            plot_level_series(axis, group[FLOW_X], group[metric], group["Scenario"], yerr=group[f"{metric} CI95"],
+                              color=COLORS[topology], marker=protocol_marker(protocol),
+                              linestyle=protocol_linestyle(protocol), markersize=5, linewidth=1.6)
+
+    # Escala log: highway (centenas a milhares de veh/h/faixa) e as vias urbanas (dezenas) no mesmo eixo.
+    axis.set_xscale("log")
+    axis.xaxis.set_major_formatter(ScalarFormatter())
+    axis.xaxis.set_minor_formatter(NullFormatter())
+    axis.set_title(METRIC_TITLES[metric])
+    axis.set_xlabel("Volume por faixa (veh/h/faixa, escala log)")
+    axis.set_ylabel(METRIC_AXIS_LABELS[metric])
+    axis.grid(True, which="both", linestyle=":", alpha=0.6)
+
+
+def representative_levels(data, topology):
+    """Menor, mediano e maior veh/h/faixa entre os níveis da topologia: [(nível, veh/h/faixa), ...]."""
+    flows = (data[data["Topology"] == topology][["Scenario", FLOW_X]].drop_duplicates("Scenario")
+             .dropna(subset=[FLOW_X]).sort_values(FLOW_X))
+    if flows.empty:
+        return []
+    picks = [0, (len(flows) - 1) // 2, len(flows) - 1]
+    return [(flows["Scenario"].iloc[index], flows[FLOW_X].iloc[index]) for index in picks]
+
+
 def draw_distance(axis, data, topology):
-    """F: PDR × distância de uma topologia; estilo de linha = fluxo, marcador = protocolo, barras = IC 95%."""
+    """F: PDR × distância de uma topologia nos níveis representativos; estilo da linha = nível (menor, mediano,
+    maior volume), marcador = protocolo, barras = IC 95%; nível sintético vazado e esmaecido."""
     data = data[data["Topology"] == topology]
     protocols = present(data["Protocol"], PROTOCOLS)
     bins = sorted(data["Distance bin"].unique())
     spread = DISTANCE_BIN_M * 0.06
-    for flow in present(data["Scenario"], FLOWS):
+    picks = representative_levels(data, topology)
+    for (flow, _), (_, linestyle) in zip(picks, REPRESENTATIVE_LEVELS):
+        synthetic = bool(synthetic_mask([flow])[0])
         for offset, protocol in enumerate(protocols):
             group = data[(data["Scenario"] == flow) & (data["Protocol"] == protocol)].sort_values("Distance bin")
             if group.empty:
                 continue
             x = group["Distance min (m)"] + DISTANCE_BIN_M / 2 + (offset - (len(protocols) - 1) / 2) * spread
             axis.errorbar(x, group["PDR (%)"], yerr=group["PDR (%) CI95"], color=COLORS[topology],
-                          linestyle=FLOW_LINESTYLES[flow], marker=protocol_marker(protocol), markersize=5,
-                          linewidth=1.6, capsize=2)
+                          linestyle=linestyle, marker=protocol_marker(protocol), markersize=5, linewidth=1.6,
+                          capsize=2, alpha=SYNTHETIC_LINE_ALPHA if synthetic else 1.0)
+            if synthetic:
+                axis.plot(x, group["PDR (%)"], linestyle="", marker=protocol_marker(protocol), markersize=5,
+                          color=COLORS[topology], markerfacecolor=SYNTHETIC_FACE, markeredgewidth=1.3)
 
     centers = [index * DISTANCE_BIN_M + DISTANCE_BIN_M / 2 for index in bins]
     labels = [f"{index * DISTANCE_BIN_M}–{(index + 1) * DISTANCE_BIN_M}" for index in bins]
@@ -132,22 +176,34 @@ def draw_distance(axis, data, topology):
         labels[-1] = f"≥ {bins[-1] * DISTANCE_BIN_M}"
     axis.set_xticks(centers)
     axis.set_xticklabels(labels)
-    axis.set_title(topology)
+    # Título: topologia e, na segunda linha, quais níveis são o menor, o mediano e o maior volume.
+    # Só o volume, marcado "sint." quando o nível é sintético.
+    described = " · ".join(f"{short} {per_lane:.0f}" + (" (sint.)" if synthetic_mask([flow])[0] else "")
+                           for (flow, per_lane), short in zip(picks, ["menor", "mediano", "maior"]))
+    axis.set_title(f"{topology}\n{described} veh/h/faixa", fontsize=9)
     axis.set_xlabel("Distância emissor–receptor (m)")
     axis.set_ylabel(METRIC_AXIS_LABELS["PDR (%)"])
     axis.grid(True, linestyle=":", alpha=0.6)
 
 
 def add_legends(figure, upper_left, upper_right, statistic):
-    """Duas legendas lado a lado e, abaixo delas, a que explica a marca estatística. Todas abaixo dos painéis."""
+    """Duas legendas lado a lado; abaixo delas, a origem do nível (observado/sintético) e, por último, a que
+    explica a marca estatística (statistic[0]). Todas abaixo dos painéis."""
     title_left, handles_left = upper_left
     title_right, handles_right = upper_right
-    figure.legend(handles=handles_left, title=title_left, fontsize=8, ncol=len(handles_left),
-                  loc="lower right", bbox_to_anchor=(0.5, 0.07))
-    figure.legend(handles=handles_right, title=title_right, fontsize=8, ncol=len(handles_right),
-                  loc="lower left", bbox_to_anchor=(0.5, 0.07))
-    figure.legend(handles=statistic, fontsize=8, loc="lower center", bbox_to_anchor=(0.5, 0.0))
-    figure.tight_layout(rect=(0, 0.2, 1, 1))
+    explanation, origin = statistic[:1], statistic[1:]
+    # Altura (fração da figura) de uma linha de legenda sem título; menor nas figuras mais altas.
+    row = 0.045 * 5 / figure.get_figheight()
+    upper_y = 0.07 + (row if origin else 0)
+    figure.legend(handles=handles_left, title=title_left, fontsize=8, ncol=min(len(handles_left), LEGEND_MAX_COLUMNS),
+                  loc="lower right", bbox_to_anchor=(0.5, upper_y))
+    figure.legend(handles=handles_right, title=title_right, fontsize=8, ncol=min(len(handles_right), LEGEND_MAX_COLUMNS),
+                  loc="lower left", bbox_to_anchor=(0.5, upper_y))
+    if origin:
+        figure.legend(handles=origin, fontsize=8, loc="lower center", bbox_to_anchor=(0.5, row), ncol=len(origin))
+    figure.legend(handles=explanation, fontsize=8, loc="lower center", bbox_to_anchor=(0.5, 0.0))
+    rows = max(-(-len(handles) // LEGEND_MAX_COLUMNS) for handles in (handles_left, handles_right))
+    figure.tight_layout(rect=(0, upper_y + 0.13 + 0.05 * (rows - 1), 1, 1))
 
 
 def topology_handles(data):
@@ -187,22 +243,32 @@ def plot_metric_curves(data, metrics, draw, legend_statistic, protocol_with_line
 def plot_density(data, modo):
     statistic = [Line2D([], [], color="gray", linewidth=1.8,
                         label="Linha = ajuste quadrático por topologia (cor) e protocolo (estilo)")]
+    statistic += level_origin_handles(with_line=False)
     plot_metric_curves(data, DENSITY_METRICS, draw_density, statistic, True, "curva_densidade", modo)
 
 
 def plot_cbr(data, modo):
     statistic = [Line2D([], [], color="black", linewidth=1.8,
                         label="Linha preta = média por faixa de CBR, todas as topologias (estilo = protocolo)")]
+    statistic += level_origin_handles(with_line=False)
     plot_metric_curves(data, CBR_METRICS, draw_cbr, statistic, True, "curva_cbr", modo)
+
+
+def plot_flow_per_lane(data, modo):
+    statistic = [Line2D([], [], color="gray", marker="o", linewidth=1.6,
+                        label="Ponto = média entre sementes; barra vertical = IC 95%; linha liga os níveis em ordem "
+                              "de volume")] + level_origin_handles()
+    plot_metric_curves(data, DENSITY_METRICS, draw_flow_per_lane, statistic, True, "curva_fluxo_faixa", modo)
 
 
 def plot_distance(data, modo):
     topologies = present(data["Topology"], TOPOLOGIES)
-    flow_handles = [Line2D([], [], color="gray", linestyle=FLOW_LINESTYLES[f], label=FLOW_LABELS[f])
-                    for f in present(data["Scenario"], FLOWS)]
-    legends = (("Fluxo", flow_handles), ("Protocolo", protocol_handles(data, False)))
+    flow_handles = [Line2D([], [], color="#404040", linestyle=linestyle, linewidth=1.8, label=name)
+                    for name, linestyle in REPRESENTATIVE_LEVELS]
+    legends = (("Nível (por veh/h/faixa da topologia)", flow_handles), ("Protocolo", protocol_handles(data, False)))
     statistic = [Line2D([], [], color="gray", marker="|", markersize=10, linestyle="",
                         label="Barra vertical = IC 95% entre sementes; cor = topologia")]
+    statistic += level_origin_handles()
     groups = [topologies] if modo == "unico" else [[topology] for topology in topologies]
     for group in groups:
         figure, axes = figure_for(len(group), modo)
@@ -229,24 +295,29 @@ def read_csv(path, required):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Curvas de KPI com mais pontos que os 3 níveis de fluxo: veículos ativos (D), CBR (E) e "
-                    "distância (F).")
-    parser.add_argument("--grafico", choices=["densidade", "cbr", "distancia", "todos"], default="todos",
+        description="Curvas de KPI com mais pontos que os níveis de fluxo: veículos ativos (D), CBR (E), "
+                    "distância (F) e volume por faixa (G).")
+    parser.add_argument("--grafico", choices=["densidade", "cbr", "distancia", "fluxo", "todos"], default="todos",
                         help="'densidade': métricas × veículos ativos por execução; 'cbr': PDR e latência × CBR "
-                             "da execução; 'distancia': PDR × distância por fluxo; 'todos': os três.")
+                             "da execução; 'distancia': PDR × distância nos níveis de menor, mediano e maior volume; 'fluxo': métricas × veh/h/faixa; "
+                             "'todos': os quatro.")
     parser.add_argument("--modo", choices=["unico", "separado"], default="unico",
                         help="'unico': os painéis de cada gráfico numa imagem só; 'separado': uma imagem por painel.")
     args = parser.parse_args()
 
     if args.grafico in ("densidade", "cbr", "todos"):
-        seeds = read_csv(SEED_CSV, ["Topology", "Protocol", DENSITY_X] + DENSITY_METRICS)
+        seeds = read_csv(SEED_CSV, ["Topology", "Scenario", "Protocol", DENSITY_X] + DENSITY_METRICS)
         if args.grafico in ("densidade", "todos"):
             plot_density(seeds, args.modo)
         if args.grafico in ("cbr", "todos"):
             plot_cbr(seeds, args.modo)
+    if args.grafico in ("fluxo", "todos"):
+        summary = read_csv(SUMMARY_CSV, ["Topology", "Scenario", "Protocol", FLOW_X] + DENSITY_METRICS
+                           + [f"{metric} CI95" for metric in DENSITY_METRICS])
+        plot_flow_per_lane(summary, args.modo)
     if args.grafico in ("distancia", "todos"):
         distance = read_csv(DISTANCE_CSV, ["Topology", "Scenario", "Protocol", "Distance bin", "Distance min (m)",
-                                           "PDR (%)", "PDR (%) CI95"])
+                                           "PDR (%)", "PDR (%) CI95", FLOW_X])
         plot_distance(distance, args.modo)
 
 

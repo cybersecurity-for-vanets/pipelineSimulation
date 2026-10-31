@@ -12,9 +12,14 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 | --- | --- | --- |
 | `flow_kpis_per_seed.csv` | uma linha por execução (semente) | dispersão, boxplot, violino |
 | `flow_kpis_by_topology.csv` | média e IC 95% por topologia, fluxo e protocolo | barras com IC, linhas, heatmap |
-| `flow_kpis_by_distance.csv` | PDR médio e IC 95% por topologia, fluxo, protocolo e faixa de distância (50 m) | curvas PDR × distância |
+| `flow_kpis_by_distance.csv` | PDR médio e IC 95% por topologia, fluxo, protocolo e faixa de distância (50 m), com `Flow per lane (veh/h/lane)` | curvas PDR × distância |
 
 - Colunas disponíveis nos dois arquivos: `Topology`, `Scenario`, `Protocol`, `PDR (%)`, `CBR (%)`, `Latency E2E (ms)`. O arquivo por semente também tem `run` e `Seed`, e o resumo tem `N` e as colunas `… CI95`.
+- `Scenario` é o nível de fluxo, de dois tipos:
+  - **observado**: volume CET de um ano e uma hora pesquisados, id `y<ano>h<hora>` (`y2019h07` = 2019, 07:00–08:00);
+  - **sintético**: fator × fluxo médio observado, sem observação, id `s<fator×100>` (`s050` = 0,50×). Serve para cobrir volumes que a CET não mediu.
+- **Cada topologia tem a sua lista de níveis** (nem todo ano pesquisou todas as vias; até ~28 por topologia). A lista vem de `conf/flow_levels.json`, lido só por `src/flow_levels.py` (`topology_level_ids()`, `flow_level_ids()` para a união, `level_label()`, `level_sort_key()`, `is_synthetic()`, `flow_per_lane()`). Não escreva a lista de níveis à mão e não ordene por hora: use `level_sort_key()` (observados por ano/hora, depois sintéticos por fator) ou o próprio volume.
+- Os arquivos têm `Flow per lane (veh/h/lane)` (`veh_h_per_lane` de `conf/flow_levels.json`, gravado por `generate_routes.py`), `Level kind` (`observed`/`synthetic`) e `Survey year` (vazio para sintético).
 - O arquivo por semente também tem `Active vehicles`: média de veículos simultâneos na janela de medição (soma de `measurementTimeS` / `MEASUREMENT_S`).
 - O PDR só é consistente somado por execução: as recepções esperadas são contadas no emissor e as recebidas no receptor. Não calcule PDR por nó.
 - Se um gráfico precisar de uma métrica que não está nesses CSVs, **inclua a métrica em `src/flow_kpis_by_topology.py`** e regere o CSV. Não a recalcule dentro do script de plot.
@@ -49,23 +54,33 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 | Topologia | **cor** | `highway` `#1f77b4`, `urbanRoad` `#ff7f0e`, `intersection` `#2ca02c` |
 | Protocolo | **marcador** | `o`, `s`, `^`, `D`, `v`, `P`, na ordem de `load_protocols()` |
 | Média do grupo | traço preto `_` | `s=400`, `linewidths=2`, `zorder=3` |
+| Origem do nível | **preenchimento** do marcador e opacidade da linha | observado (CET): marcador cheio, linha opaca; sintético: marcador vazado (branco por dentro) e segmento esmaecido (`SYNTHETIC_LINE_ALPHA`) quando uma das pontas é sintética |
+| Nível (quando não está no eixo X, ex. PDR × distância) | **estilo da linha** | só três níveis representativos por topologia: menor (`:`), mediano (`--`) e maior (`-`) veh/h/faixa; o título do painel diz o volume de cada um |
+
+- Em gráficos sobre o fluxo, o eixo X é **numérico**, `Flow per lane (veh/h/lane)`, e não uma categoria por nível (com ~28 níveis, barras ou ticks por nível ficam ilegíveis). Quando topologias diferentes dividem o eixo, use escala log (o highway tem centenas a milhares de veh/h/faixa, as vias urbanas dezenas).
+- Linhas que ligam níveis seguem a ordem do volume (x), não a do id.
+- Observado × sintético é obrigatório em todo gráfico que mostre níveis: use `plot_level_series()` (linhas com IC) e `scatter_levels()` (dispersão) de `src/level_style.py`, reexportados por `plot_common.py`, e inclua na legenda `level_origin_handles()` ("observado (CET)" e "sintético").
+- Não há cor nem tom por nível (o antigo `level_shade()` por hora foi retirado). Não crie dicionários de estilo por nível: a lista muda com os anos da CET e os fatores sintéticos.
+- Heatmaps não têm uma linha por (topologia, nível): agrupe os níveis da topologia em faixas de volume (tercis por veh/h/faixa, ver `src/generate_kpi_heatmaps.py`) e diga no rótulo a faixa e quantos níveis observados e sintéticos ela tem.
 
 - Mantenha a mesma cor para a mesma topologia e o mesmo marcador para o mesmo protocolo em todos os gráficos. Se um tipo de gráfico não suportar marcadores (barras, por exemplo), codifique o protocolo com a mesma ordem de posição e deixe a topologia como cor.
 - Essas constantes, as traduções e `save()` ficam em `plot_common.py`. Importe de lá em vez de copiar os dicionários.
 
 ### 4.2 Textos
 
-- Todo texto visível fica em **português** e **não pode reproduzir o texto bruto do CSV**. Isso vale para os valores de `Scenario` (por exemplo, `low_flow`) e para os nomes de colunas (por exemplo, `Latency E2E (ms)`).
+- Todo texto visível fica em **português** e **não pode reproduzir o texto bruto do CSV**. Isso vale para os valores de `Scenario` (por exemplo, `y2019h07`, `s050`) e para os nomes de colunas (por exemplo, `Latency E2E (ms)`).
 - Traduções já definidas em `plot_sratter.py`:
 
 | Tipo | Chave no CSV | Texto exibido |
 | --- | --- | --- |
-| Fluxo | `low_flow` / `medium_flow` / `high_flow` | Baixo / Médio / Alto |
+| Nível de fluxo observado (rótulo) | `y2019h07`, `y2016h18`, … | `07h–08h/2019`, `18h–19h/2016`, … (`level_label()`) |
+| Nível de fluxo sintético (rótulo) | `s025`, `s125`, … | `0,25× (sintético)`, `1,25× (sintético)`, … (`level_label()`) |
+| Origem do nível (legenda) | `observed` / `synthetic` | observado (CET) / sintético |
 | Título do painel | `PDR (%)` / `CBR (%)` / `Latency E2E (ms)` | PDR / CBR / Latência E2E |
 | Título do eixo Y | `PDR (%)` | Taxa de entrega de pacotes (%) |
 | Título do eixo Y | `CBR (%)` | Taxa de ocupação do canal (%) |
 | Título do eixo Y | `Latency E2E (ms)` | Latência fim a fim (ms) |
-| Título do eixo X | (fluxo) | Nível de fluxo |
+| Título do eixo X | `Flow per lane (veh/h/lane)` | Volume por faixa (veh/h/faixa); acrescente `, escala log` quando o eixo for log |
 
 - Reutilize esses textos. Para uma métrica ou categoria nova, adicione a tradução ao dicionário correspondente antes de usá-la.
 - Todo eixo tem título, e o eixo da métrica inclui a unidade. O título do painel é curto e sem unidade.
@@ -74,7 +89,7 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 ### 4.3 Legendas
 
 - As legendas ficam **abaixo dos painéis**, em `figure.legend`, e nunca dentro da área de plotagem, para não cobrir pontos. Use `figure.tight_layout(rect=(0, 0.2, 1, 1))` para reservar o espaço.
-- Elas são três, nesta ordem de baixo para cima: média do grupo (`Marca preta = média de cada grupo`), e acima dela, lado a lado, Topologia (cor) e Protocolo (marcador).
+- Elas são, de baixo para cima: a marca estatística (`Marca preta = média de cada grupo`), a origem do nível (observado (CET) / sintético) e, acima delas, lado a lado, Topologia (cor) e Protocolo (marcador).
 - Se um novo gráfico usar outra marca estatística (mediana, IC, caixa), inclua uma entrada na legenda que explique o elemento, como é feito para a média.
 - Legendas incluem só categorias presentes nos dados. Não liste protocolos ausentes.
 

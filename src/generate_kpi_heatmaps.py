@@ -7,16 +7,16 @@ import pandas as pd
 try:
     from .plot_kpi_charts import (
         CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
-        PAIRED_SUMMARY_CSV, SUMMARY_CSV,
+        PAIRED_SUMMARY_CSV, SUMMARY_CSV, scenario_flow_per_lane,
     )
-    from .flow_levels import flow_level_ids, level_label
+    from .level_style import synthetic_mask
     from .protocols import load_protocols
 except ImportError:
     from plot_kpi_charts import (
         CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
-        PAIRED_SUMMARY_CSV, SUMMARY_CSV,
+        PAIRED_SUMMARY_CSV, SUMMARY_CSV, scenario_flow_per_lane,
     )
-    from flow_levels import flow_level_ids, level_label
+    from level_style import synthetic_mask
     from protocols import load_protocols
 
 
@@ -60,35 +60,57 @@ def draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric=False
         ax.figure.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
 
 
-def row_label(topology, flow):
-    try:
-        return f"{topology} / {level_label(flow)}"
-    except ValueError:
-        return f"{topology} / {flow}"
+# Faixas de volume por topologia: os níveis (observados e sintéticos) da topologia, ordenados por veh/h/faixa,
+# divididos em tercis. Uma linha por (topologia, nível) daria ~28 linhas por topologia e um heatmap ilegível;
+# cada célula é a média do KPI entre os níveis da faixa. Os valores por nível ficam nos gráficos de linha
+# (plot_kpi_charts.py) e em kpi_run_summary.csv / paired_summary.csv.
+FLOW_BANDS = ["volume baixo", "volume médio", "volume alto"]
+
+
+def level_bands(frames):
+    """{(topologia, nível): rótulo da linha} e a ordem das linhas, a partir dos níveis presentes nos dados."""
+    pairs = pd.concat([frame[["Topology", "Scenario"]] for frame in frames]).drop_duplicates()
+    pairs = pairs.assign(x=[scenario_flow_per_lane(t, level) for t, level in zip(pairs["Topology"], pairs["Scenario"])])
+    pairs = pairs.dropna(subset=["x"])
+
+    band_of, row_labels = {}, []
+    for topology in TOPOLOGY_ORDER:
+        levels = pairs[pairs["Topology"] == topology].sort_values("x")
+        if levels.empty:
+            continue
+        for band, positions in zip(FLOW_BANDS, np.array_split(np.arange(len(levels)), len(FLOW_BANDS))):
+            chunk = levels.iloc[positions]
+            if chunk.empty:
+                continue
+            synthetic = int(synthetic_mask(chunk["Scenario"]).sum())
+            label = (f"{topology} / {band}\n{chunk['x'].min():.0f}–{chunk['x'].max():.0f} veh/h/faixa "
+                     f"({len(chunk) - synthetic} obs. + {synthetic} sint.)")
+            row_labels.append(label)
+            band_of.update({(topology, level): label for level in chunk["Scenario"]})
+    return band_of, row_labels
 
 
 def build_panels(summary, paired):
-    # Uma linha por (topologia, nível horário); o rótulo usa a hora (ex. "highway / 07h–08h").
-    row_labels = [row_label(topology, flow) for topology in TOPOLOGY_ORDER for flow in flow_level_ids()]
+    band_of, row_labels = level_bands([summary, paired])
 
-    def with_rows(frame):
-        return frame.assign(Row=[row_label(t, f) for t, f in zip(frame["Topology"], frame["Scenario"])])
+    def banded(frame, column):
+        rows = frame.assign(Row=[band_of.get(key) for key in zip(frame["Topology"], frame["Scenario"])])
+        rows = rows.dropna(subset=["Row"])
+        return rows.pivot_table(index="Row", columns="Protocol", values=column, aggfunc="mean")
 
     def run_level(kpi):
-        rows = with_rows(summary[summary["KPI"] == kpi])
-        return rows.pivot_table(index="Row", columns="Protocol", values="Mean", aggfunc="first")
+        return banded(summary[summary["KPI"] == kpi], "Mean")
 
     def paired_level(kpi):
-        rows = with_rows(paired[paired["KPI"] == kpi])
-        return rows.pivot_table(index="Row", columns="Protocol", values="MeanDiff", aggfunc="first")
+        return banded(paired[paired["KPI"] == kpi], "MeanDiff")
 
     return row_labels, [
-        ("p99 processing latency (ms)", run_level(PROCESSING_P99_KPI), "magma", False),
-        ("CPU utilization (%)", run_level(CPU_KPI), "YlOrRd", False),
-        ("Deadline misses (% of CAM operations)", run_level(DEADLINE_KPI), "Reds", False),
-        ("Δ processing latency vs baseline (ms)", paired_level(PROCESSING_KPI), "RdBu_r", True),
-        ("Δ end-to-end latency vs baseline (ms)", paired_level(LATENCY_KPI), "RdBu_r", True),
-        ("Δ PDR vs baseline (pp)", paired_level(PDR_KPI), "RdBu_r", True),
+        ("Latência de processamento p99 (ms)", run_level(PROCESSING_P99_KPI), "magma", False),
+        ("Utilização de CPU (%)", run_level(CPU_KPI), "YlOrRd", False),
+        ("Perdas de prazo (% das operações de CAM)", run_level(DEADLINE_KPI), "Reds", False),
+        ("Δ latência de processamento vs baseline (ms)", paired_level(PROCESSING_KPI), "RdBu_r", True),
+        ("Δ latência fim a fim vs baseline (ms)", paired_level(LATENCY_KPI), "RdBu_r", True),
+        ("Δ PDR vs baseline (p.p.)", paired_level(PDR_KPI), "RdBu_r", True),
     ]
 
 
@@ -104,17 +126,18 @@ def generate_heatmaps(summary, paired):
     if exported:
         pd.concat(exported, ignore_index=True).to_csv(VALUES_CSV, index=False)
 
-    figure, axes = plt.subplots(2, 3, figsize=(20, max(11, 0.45 * len(row_labels) * 2 + 2)), constrained_layout=True)
+    figure, axes = plt.subplots(2, 3, figsize=(22, max(11, 0.7 * len(row_labels) * 2 + 2)), constrained_layout=True)
     for ax, (title, values, cmap, symmetric) in zip(axes.flat, panels):
         draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric)
-    figure.suptitle("FF1 protocols versus baseline: processing cost, channel load and paired deltas", fontsize=14)
+    figure.suptitle("Protocolos FF1 × baseline: custo de processamento e diferenças pareadas "
+                    "(média dos níveis de cada faixa de volume da topologia)", fontsize=14)
     figure.savefig(OUTPUT_PNG, dpi=220, bbox_inches="tight")
     figure.savefig(OUTPUT_PDF, bbox_inches="tight")
     plt.close(figure)
 
     print(f"[OK] Heatmap PNG: {OUTPUT_PNG}")
     print(f"[OK] Heatmap PDF: {OUTPUT_PDF}")
-    print(f"[OK] KPI values CSV: {VALUES_CSV}")
+    print(f"[OK] Valores dos heatmaps (CSV): {VALUES_CSV}")
 
 
 def main():

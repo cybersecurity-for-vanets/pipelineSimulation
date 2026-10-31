@@ -6,11 +6,11 @@ import xml.etree.ElementTree as ET
 try:
     from .protocols import load_cam_model, load_crypto_timings, load_protocols
     from .generate_routes import SUMO_STEP_LENGTH
-    from .flow_levels import flow_level_ids, level_label
+    from .flow_levels import level_label, parse_level, topology_level_ids
 except ImportError:
     from protocols import load_cam_model, load_crypto_timings, load_protocols
     from generate_routes import SUMO_STEP_LENGTH
-    from flow_levels import flow_level_ids, level_label
+    from flow_levels import level_label, parse_level, topology_level_ids
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENARIOS_CONF_PATH = os.path.join(BASE_DIR, "conf", "coordinates_scenaries.json")
@@ -59,18 +59,37 @@ def get_topology_bounds(topology):
     min_x, min_y, max_x, max_y = map(float, location.get("convBoundary").split(","))
     return min_x, min_y, max_x, max_y
 
+def level_description(level):
+    """Texto do nível no cabeçalho de cada config: 'Fluxo CET 07h–08h/2019 (y2019h07)' ou 'Fluxo sintético 0,50× (s050)'."""
+    info = parse_level(level)
+    if info["kind"] == "synthetic":
+        return f"Fluxo sintético {info['factor']:.2f}× ({level})".replace(".", ",")
+    return f"Fluxo CET {level_label(level)} ({level})"
+
+def scenario_levels(scenarios):
+    """Níveis de cada topologia (conf/flow_levels.json); cada topologia tem a sua lista."""
+    levels = {}
+    for top in scenarios:
+        try:
+            levels[top] = topology_level_ids(top)
+        except KeyError:
+            raise KeyError(f"Topologia '{top}' sem níveis em conf/flow_levels.json; rode src/generate_routes.py") from None
+        if not levels[top]:
+            raise ValueError(f"Topologia '{top}' sem níveis em conf/flow_levels.json")
+    return levels
+
 def generate_omnetpp_ini():
     with open(SCENARIOS_CONF_PATH, "r", encoding="utf-8") as f:
         scenarios = list(json.load(f).keys())
-    # Um nível por hora observada pela CET (h07, h08, ...), na ordem de conf/flow_levels.json.
-    flows = flow_level_ids()
+    # Níveis por topologia: observados (y<ano>h<hora>) e sintéticos (s<fator×100>), em ordem de level_sort_key.
+    levels_by_topology = scenario_levels(scenarios)
     protocols = load_protocol_profiles()
     cam_model = load_cam_model()
-    total_configs = len(scenarios) * len(protocols) * len(flows)
+    total_configs = len(protocols) * sum(len(levels) for levels in levels_by_topology.values())
 
     launchd_files = {}
     for top in scenarios:
-        for flow in flows:
+        for flow in levels_by_topology[top]:
             sumocfg_filename = f"{top}_{flow}.sumocfg"
             sumocfg_path = os.path.join(TRAFFIC_DIR, sumocfg_filename)
             if not os.path.isfile(sumocfg_path):
@@ -210,7 +229,7 @@ network = RSUExampleScenario
         rsu_y = (min_y + max_y) / 2
 
         for proto_name, crypto_profile in protocols.items():
-            for flow in flows:
+            for flow in levels_by_topology[top]:
                 count += 1
                 config_name = f"Config_{top}_{proto_name}_{flow}"
                 launchd_filename = launchd_files[(top, flow)]
@@ -218,7 +237,7 @@ network = RSUExampleScenario
                 
                 ini_content += f"""
 # ------------------------------------------------------------------------------
-# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | Fluxo CET {level_label(flow)} ({flow})
+# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | {level_description(flow)}
 # ------------------------------------------------------------------------------
 [Config {config_name}]
 description = "{top} - {proto_name} - {flow}"
@@ -236,7 +255,9 @@ description = "{top} - {proto_name} - {flow}"
     with open(INI_OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.write(ini_content)
 
-    print(f"[OK] {INI_OUTPUT_PATH} gerado com sucesso contendo {count} configurações.")
+    per_topology = ", ".join(f"{top}: {len(levels)} níveis" for top, levels in levels_by_topology.items())
+    print(f"[OK] {INI_OUTPUT_PATH} gerado com sucesso contendo {count} configurações ({per_topology}; "
+          f"{len(protocols)} protocolos).")
 
 if __name__ == "__main__":
     generate_omnetpp_ini()

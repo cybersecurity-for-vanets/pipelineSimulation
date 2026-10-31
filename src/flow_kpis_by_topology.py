@@ -5,12 +5,14 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .flow_levels import flow_level_ids, load_flow_levels, split_level
+    from .flow_levels import load_flow_levels, split_level, is_current_config
     from .generate_stage2_configs import MEASUREMENT_S
+    from .level_style import add_level_columns, level_origin_handles, scatter_levels, sort_levels
     from .protocols import load_protocols
 except ImportError:
-    from flow_levels import flow_level_ids, load_flow_levels, split_level
+    from flow_levels import load_flow_levels, split_level, is_current_config
     from generate_stage2_configs import MEASUREMENT_S
+    from level_style import add_level_columns, level_origin_handles, scatter_levels, sort_levels
     from protocols import load_protocols
 
 # ==============================================================================
@@ -51,10 +53,11 @@ SCALARS = {
 # 2. LEITURA EM STREAMING DO SCAVETOOL EXPORT
 # ==============================================================================
 def parse_config(config_name):
-    if not isinstance(config_name, str):
+    # Configs fora de conf/flow_levels.json (rodadas antigas) ficam de fora, como na etapa 4.
+    if not isinstance(config_name, str) or not is_current_config(config_name):
         return None
 
-    # Ex.: Config_highway_FF1_AES_h07 -> ("highway", "FF1_AES", "h07")
+    # Ex.: Config_highway_FF1_AES_y2019h07 -> ("highway", "FF1_AES", "y2019h07"); sintético: ..._s050
     clean_name, flow = split_level(config_name.removeprefix("Config_"))
     if flow is None:
         return None
@@ -163,7 +166,8 @@ def summarize_distance(distance_runs):
 def flow_per_lane_by_scenario():
     """veh/h/faixa de cada (topologia, nível), lido de conf/flow_levels.json (gravado por generate_routes.py).
 
-    É o volume CET observado na hora do nível, somado sobre as rotas da topologia e dividido pelas faixas.
+    Nível observado: volume CET do ano e hora do nível; nível sintético: fator × fluxo médio observado. Em ambos,
+    somado sobre as rotas da topologia e dividido pelas faixas.
     """
     topologies = load_flow_levels()["topologies"]
     return {(topology, flow): values["veh_h_per_lane"]
@@ -171,17 +175,19 @@ def flow_per_lane_by_scenario():
 
 
 def with_flow_per_lane(frame, flow_per_lane):
+    """Acrescenta veh/h/faixa, 'Level kind' (observed/synthetic) e 'Survey year' (NaN para sintético)."""
     frame = frame.copy()
     keys = zip(frame["Topology"].astype(str), frame["Scenario"].astype(str))
     frame["Flow per lane (veh/h/lane)"] = [flow_per_lane.get(key, np.nan) for key in keys]
-    return frame
+    return add_level_columns(frame)
 
 
 def ordered(frame):
     """Aplica a ordem de topologias, fluxos e protocolos (a mesma das listas do script)."""
     frame = frame.copy()
     frame["Topology"] = pd.Categorical(frame["Topology"], TOPOLOGIES, ordered=True)
-    frame["Scenario"] = pd.Categorical(frame["Scenario"], flow_level_ids(), ordered=True)
+    # Níveis em ordem de level_sort_key (observados por ano/hora, depois sintéticos); cada topologia tem a sua lista.
+    frame["Scenario"] = pd.Categorical(frame["Scenario"], sort_levels(frame["Scenario"].astype(str)), ordered=True)
     frame["Protocol"] = pd.Categorical(frame["Protocol"], PROTOCOLS, ordered=True)
     return frame.sort_values(["Topology", "Scenario", "Protocol"]).reset_index(drop=True)
 
@@ -203,8 +209,12 @@ def summarize(run_kpis):
 # 4. GRÁFICO DE DISPERSÃO POR SEMENTE
 # ==============================================================================
 def plot_seed_scatter(run_kpis):
-    """Um gráfico por topologia: x = volume do nível (veh/h/faixa), cada ponto é uma semente; preto = média."""
+    """Um gráfico por topologia: x = volume do nível (veh/h/faixa), cada ponto é uma semente; preto = média.
+
+    Nível sintético = marcador vazado.
+    """
     os.makedirs(PLOTS_DIR, exist_ok=True)
+    colors = plt.get_cmap("tab10")
 
     for topology in TOPOLOGIES:
         data = run_kpis[(run_kpis["Topology"] == topology) & run_kpis[FLOW_X].notna()]
@@ -215,13 +225,18 @@ def plot_seed_scatter(run_kpis):
         spread = 0.02 * max(flows.max() - flows.min(), flows.max() * 0.1) / max(len(PROTOCOLS), 1)
 
         figure, axes = plt.subplots(1, len(METRICS), figsize=(5 * len(METRICS), 4.5))
+        protocol_handles = []
         for axis, metric in zip(axes, METRICS):
             for offset, protocol in enumerate(PROTOCOLS):
                 group = data[data["Protocol"] == protocol]
                 if group.empty:
                     continue
                 shift = (offset - (len(PROTOCOLS) - 1) / 2) * spread
-                axis.scatter(group[FLOW_X] + shift, group[metric], s=22, alpha=0.7, label=protocol)
+                color = colors(offset % colors.N)
+                scatter_levels(axis, group[FLOW_X] + shift, group[metric], group["Scenario"].astype(str),
+                               color=color)
+                if axis is axes[0]:
+                    protocol_handles.append(plt.Line2D([], [], marker="o", linestyle="", color=color, label=protocol))
 
                 means = group.groupby(FLOW_X)[metric].mean()
                 axis.scatter(means.index + shift, means.values, marker="_", s=400, linewidths=2, color="black",
@@ -231,9 +246,10 @@ def plot_seed_scatter(run_kpis):
             axis.set_title(metric)
             axis.grid(True, linestyle=":", alpha=0.6)
 
-        axes[0].legend(title="Protocolo", fontsize=8)
+        handles = protocol_handles + level_origin_handles(with_line=False)
+        figure.legend(handles=handles, fontsize=8, loc="lower center", ncol=len(handles), bbox_to_anchor=(0.5, 0.0))
         figure.suptitle(f"{topology}: valores por semente (marca preta = média)")
-        figure.tight_layout()
+        figure.tight_layout(rect=(0, 0.07, 1, 1))
         figure.savefig(os.path.join(PLOTS_DIR, f"scatter_{topology}.png"), dpi=200)
         plt.close(figure)
         print(f"[OK] Gráfico salvo em: '{os.path.join(PLOTS_DIR, f'scatter_{topology}.png')}'")
@@ -266,7 +282,7 @@ def main():
     seed_rows.to_csv(OUTPUT_SEED_CSV, index=False, float_format="%.4f")
     print(f"[OK] Valores por semente salvos em: '{OUTPUT_SEED_CSV}'")
 
-    distance_summary = summarize_distance(distance_pdr_per_run(sums, configs))
+    distance_summary = with_flow_per_lane(summarize_distance(distance_pdr_per_run(sums, configs)), flow_per_lane)
     distance_summary.to_csv(OUTPUT_DISTANCE_CSV, index=False, float_format="%.4f")
     print(f"[OK] PDR por distância salvo em: '{OUTPUT_DISTANCE_CSV}'")
 

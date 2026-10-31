@@ -9,13 +9,15 @@ try:
     from .kpi_statistics import (
         equivalence_tests, load_margins, paired_differences, summarize_differences,
     )
-    from .flow_levels import flow_level_ids, flow_per_lane, level_label, split_level
+    from .flow_levels import flow_per_lane, split_level, is_current_config
+    from .level_style import add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key
     from .protocols import load_protocols
 except ImportError:
     from kpi_statistics import (
         equivalence_tests, load_margins, paired_differences, summarize_differences,
     )
-    from flow_levels import flow_level_ids, flow_per_lane, level_label, split_level
+    from flow_levels import flow_per_lane, split_level, is_current_config
+    from level_style import add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key
     from protocols import load_protocols
 
 
@@ -85,10 +87,11 @@ def percentile_from_bins(counts, quantile):
 
 
 def parse_config(config_name):
-    if not isinstance(config_name, str):
+    # Configs fora de conf/flow_levels.json (rodadas antigas) ficam de fora, como na etapa 4.
+    if not isinstance(config_name, str) or not is_current_config(config_name):
         return None
 
-    # Ex.: Config_highway_FF1_AES_h07 -> ("highway", "FF1_AES", "h07")
+    # Ex.: Config_highway_FF1_AES_y2019h07 -> ("highway", "FF1_AES", "y2019h07"); sintético: ..._s050
     clean_name, flow = split_level(config_name.removeprefix("Config_"))
     if flow is None:
         return None
@@ -272,6 +275,10 @@ def load_run_kpis():
     flows = {key: scenario_flow_per_lane(*key)
              for key in summary[["Topology", "Scenario"]].drop_duplicates().itertuples(index=False)}
     summary[FLOW_X] = [flows[key] for key in zip(summary["Topology"], summary["Scenario"])]
+    summary = add_level_columns(summary).sort_values(
+        ["Topology", "Protocol", "Scenario", "KPI"],
+        key=lambda column: column.map(safe_level_sort_key) if column.name == "Scenario" else column,
+    ).reset_index(drop=True)
     return run_values, summary
 
 
@@ -292,65 +299,43 @@ def save_figure(figure, filename):
     plt.close(figure)
 
 
-def plot_bars(summary):
-    flows = flow_level_ids()
-    metrics = summary["KPI"].unique()
-    for metric in metrics:
-        figure, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(18, 4.5), squeeze=False)
-        legend_handles = []
-        for ax, topology in zip(axes[0], TOPOLOGIES):
-            data = summary[(summary["Topology"] == topology) & (summary["KPI"] == metric)]
-            protocols = [value for value in PROTOCOLS if value in data["Protocol"].unique()]
-            positions = np.arange(len(flows))
-            width = 0.8 / max(len(protocols), 1)
-            for protocol_index, protocol in enumerate(protocols):
-                values = data[data["Protocol"] == protocol].set_index("Scenario").reindex(flows)
-                offset = (protocol_index - (len(protocols) - 1) / 2) * width
-                bars = ax.bar(
-                    positions + offset,
-                    values["Mean"],
-                    width,
-                    yerr=values["CI95"],
-                    capsize=2,
-                    label=protocol,
-                )
-                if topology == TOPOLOGIES[0]:
-                    legend_handles.append(bars)
-            ax.set_title(topology)
-            ax.set_xticks(positions, [level_label(flow) for flow in flows], rotation=45, ha="right")
-            ax.set_ylabel(metric)
-            ax.grid(axis="y", alpha=0.3)
-        figure.suptitle(f"{metric}: média por repetição com IC 95%")
-        figure.legend(legend_handles, [handle.get_label() for handle in legend_handles], title="Protocolo", loc="upper center", ncol=max(len(legend_handles), 1), bbox_to_anchor=(0.5, 0.94), fontsize=8)
-        figure.tight_layout(rect=(0, 0, 1, 0.88))
-        save_figure(figure, f"bar_{metric.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct')}")
+def chart_filename(prefix, metric):
+    return f"{prefix}_{metric.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct')}"
 
 
+# As barras com uma categoria por nível (plot_bars) foram retiradas: com ~28 níveis por topologia ficavam
+# ilegíveis, e plot_lines mostra os mesmos valores (média e IC 95%) sobre o volume por faixa.
 def plot_lines(summary):
-    """Uma linha por protocolo sobre o volume observado de cada nível (veh/h/faixa) na topologia do painel."""
-    flows = flow_level_ids()
+    """Uma linha por protocolo sobre o volume de cada nível (veh/h/faixa) na topologia do painel.
+
+    Os pontos são ligados em ordem de volume; nível sintético = marcador vazado e segmento esmaecido.
+    """
     metrics = summary["KPI"].unique()
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for metric in metrics:
         figure, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), squeeze=False)
-        legend_handles = []
+        legend_handles = {}
         for ax, topology in zip(axes[0], TOPOLOGIES):
             data = summary[(summary["Topology"] == topology) & (summary["KPI"] == metric)]
-            for protocol in PROTOCOLS:
-                values = data[data["Protocol"] == protocol].set_index("Scenario").reindex(flows)
-                values = values.assign(x=[scenario_flow_per_lane(topology, flow) for flow in flows])
-                values = values.dropna(subset=["Mean", "x"]).sort_values("x")
-                if not values.empty:
-                    line = ax.errorbar(values["x"], values["Mean"], yerr=values["CI95"], marker="o", capsize=2, label=protocol)
-                    if topology == TOPOLOGIES[0]:
-                        legend_handles.append(line)
+            for protocol_index, protocol in enumerate(PROTOCOLS):
+                values = data[data["Protocol"] == protocol]
+                values = values.assign(x=[scenario_flow_per_lane(topology, flow) for flow in values["Scenario"]])
+                values = values.dropna(subset=["Mean", "x"])
+                if values.empty:
+                    continue
+                color = colors[protocol_index % len(colors)]
+                plot_level_series(ax, values["x"], values["Mean"], values["Scenario"], color=color,
+                                  yerr=values["CI95"], markersize=4)
+                legend_handles.setdefault(protocol, Line2D([], [], color=color, marker="o", label=protocol))
             ax.set_title(topology)
             ax.set_xlabel("Volume por faixa (veh/h/faixa)")
             ax.set_ylabel(metric)
             ax.grid(alpha=0.3)
-        figure.suptitle(f"Tendência por fluxo: {metric}")
-        figure.legend(legend_handles, [handle.get_label() for handle in legend_handles], title="Protocolo", loc="upper center", ncol=max(len(legend_handles), 1), bbox_to_anchor=(0.5, 0.94), fontsize=8)
+        handles = list(legend_handles.values()) + level_origin_handles()
+        figure.suptitle(f"Tendência por fluxo: {metric} (média por repetição, IC 95%)")
+        figure.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.94), fontsize=8)
         figure.tight_layout(rect=(0, 0, 1, 0.88))
-        save_figure(figure, f"line_{metric.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct')}")
+        save_figure(figure, chart_filename("line", metric))
 
 
 def plot_latency_boxplots(run_values):
@@ -446,7 +431,6 @@ def main():
     # Distance bins and per-run detail stay in the CSVs; charts show the overall KPIs and paired deltas.
     chart_summary = pd.concat([summary, delta_rows(paired_summary)], ignore_index=True)
     chart_summary = chart_summary[~chart_summary["KPI"].str.contains(" m (%)", regex=False)]
-    plot_bars(chart_summary)
     plot_lines(chart_summary)
     plot_latency_boxplots(run_values)
     plot_cbr_latency_scatter(run_values)

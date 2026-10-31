@@ -86,6 +86,8 @@ conf/*
 !conf/routes.json
 !conf/cet*.csv
 !conf/protocols.json
+!conf/calibration_params.json
+!conf/crypto_timings.json
 !conf/cam_model.json
 !conf/pipelineSimulation/
 conf/pipelineSimulation/*

@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 PARAMS_PATH = PROJECT_DIR / "conf" / "calibration_params.json"
 KRAUSS_KEYS = ("accel", "decel", "tau", "sigma", "minGap", "speedFactor", "speedDev")
-# Colunas de conf/cet_volumes_2019.csv que entram no equivalente-carro.
+# Colunas de conf/cet_volumes.csv que entram no equivalente-carro.
 CET_VEHICLE_CLASSES = ("automoveis", "onibus_urbano", "onibus_fretado", "caminhoes", "motos", "bicicletas")
 TOPOLOGIES = ("highway", "urban_road", "intersection")
 
@@ -40,13 +40,23 @@ def validate_calibration_params(params):
     for name, factor in pce.items():
         if not _is_number(factor) or factor < 0:
             raise CalibrationParamsError(f"cet.pce.{name} deve ser número não negativo")
-    calibration = _hours(params, "cet.calibration_hours")
-    validation = _hours(params, "cet.validation_hours")
-    levels = _hours(params, "cet.flow_level_hours")
-    if set(calibration) & set(validation):
-        raise CalibrationParamsError("cet.calibration_hours e cet.validation_hours não podem ter hora em comum")
-    if not set(calibration) | set(validation) <= set(levels):
-        raise CalibrationParamsError("Toda hora de calibração e de validação deve estar em cet.flow_level_hours")
+    years = _field(params, "cet.years")
+    if not _is_list(years) or not years or len(set(years)) != len(years) \
+            or not all(_is_integer(year) and 1977 <= year <= 2100 for year in years):
+        raise CalibrationParamsError("cet.years deve ser lista não vazia de anos do MSVP, sem repetição")
+    hours = _hours(params, "cet.hours")
+    calibration_year = _field(params, "cet.calibration.year")
+    if calibration_year not in years:
+        raise CalibrationParamsError("cet.calibration.year deve estar em cet.years")
+    if not set(_hours(params, "cet.calibration.hours")) <= set(hours):
+        raise CalibrationParamsError("cet.calibration.hours deve estar contido em cet.hours")
+    if _field(params, "cet.synthetic.reference_year") not in years:
+        raise CalibrationParamsError("cet.synthetic.reference_year deve estar em cet.years")
+    factors = _field(params, "cet.synthetic.factors")
+    if not _is_list(factors) or len(set(factors)) != len(factors) \
+            or not all(_is_number(factor) and 0 < factor <= 9.99 for factor in factors) \
+            or len({round(factor * 100) for factor in factors}) != len(factors):
+        raise CalibrationParamsError("cet.synthetic.factors deve ser lista de fatores positivos distintos (precisão 0,01)")
 
     _check_number(_field(params, "network.map_margin_km"), "network.map_margin_km", minimum_exclusive=0)
     ratio = _field(params, "network.max_length_ratio_error")
@@ -161,8 +171,11 @@ def _check_interval(value, name):
 def main():
     params = load_calibration_params()
     print(f"[OK] {PARAMS_PATH} é válido")
-    print(f"Horas de calibração: {params['cet']['calibration_hours']}; validação: {params['cet']['validation_hours']}")
-    print(f"Níveis de fluxo do experimento: {params['cet']['flow_level_hours']}")
+    cet = params["cet"]
+    print(f"Anos CET: {cet['years']}; horas: {cet['hours']}")
+    print(f"Calibração: {cet['calibration']['year']}, horas {cet['calibration']['hours']}; "
+          "validação: todas as demais horas e anos observados")
+    print(f"Níveis sintéticos: {cet['synthetic']['factors']} × fluxo médio de {cet['synthetic']['reference_year']}")
     print(f"Krauss: {len(params['krauss']['bounds'])} parâmetros livres de {len(KRAUSS_KEYS)}")
 
 

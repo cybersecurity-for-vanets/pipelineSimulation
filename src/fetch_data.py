@@ -3,7 +3,7 @@
 Entrada: conf/routes.json (trechos CET MSVP 2019 por topologia, com pontos [lat, lon] em ordem de viagem).
 Saídas: osmFiles/<topologia>.osm e .net.xml, e conf/cet_scenarios.json com as rotas mapeadas.
 
-Os dados de volume e velocidade da CET ficam em conf/cet_*_2019.csv e são lidos na calibração.
+Os dados de volume e velocidade da CET ficam em conf/cet_volumes.csv e conf/cet_speeds.csv e são lidos na calibração.
 """
 import argparse
 import json

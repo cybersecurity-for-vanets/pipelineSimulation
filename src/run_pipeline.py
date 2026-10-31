@@ -25,9 +25,9 @@ def run_step(step_name, script_name):
 def main():
     print("==================================================")
     print(" INICIANDO PIPELINE COMPLETO DE SIMULAÇÃO (VANET)")
-    print(" Matriz: 3 Topologias x 6 Níveis horários (CET) x 4 Protocolos")
-    print(" Protocolos: baseline, FF1-AES, FF1-LEA, FF1-SPECK")
-    print(" Total: 72 Configurações | 720 Simulações OMNeT++ (10 seeds)")
+    print(" Matriz: 3 Topologias x níveis de fluxo por topologia x 4 Protocolos")
+    print(" Níveis: volumes CET observados (ano/hora) + níveis sintéticos (conf/flow_levels.json)")
+    print(" Protocolos: baseline, FF1-AES, FF1-LEA, FF1-SPECK (10 seeds por configuração)")
     print("==================================================")
 
     # Etapa 1: Dados históricos, calibração de Krauss e rotas SUMO

@@ -13,12 +13,19 @@ else:
 RAW_DATA_DIR = os.path.join(RESULTS_DIR, "rawData")
 
 sys.path.insert(0, os.path.join(PROJECT_DIR, "src"))
+from flow_levels import level_label  # noqa: E402
+from level_style import (level_origin_handles, plot_level_series, scatter_levels, sort_levels,  # noqa: E402,F401
+                         synthetic_mask)
 from protocols import load_protocols  # noqa: E402
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
-FLOWS = ["low_flow", "medium_flow", "high_flow"]
-FLOW_LABELS = {"low_flow": "Baixo", "medium_flow": "Médio", "high_flow": "Alto"}
 PROTOCOLS = list(load_protocols())
+
+# Níveis de fluxo (ver src/flow_levels.py): observados CET por ano e hora (y2019h07) e sintéticos (s050). Cada
+# topologia tem a sua lista. O eixo de fluxo é o volume numérico por faixa; o rótulo de um nível
+# ("07h–08h/2019", "0,50× (sintético)") vem de level_label(). Observado × sintético: src/level_style.py.
+FLOW_X = "Flow per lane (veh/h/lane)"
+FLOW_AXIS_LABEL = "Volume por faixa (veh/h/faixa)"
 
 METRIC_AXIS_LABELS = {
     "PDR (%)": "Taxa de entrega de pacotes (%)",
@@ -35,6 +42,11 @@ MARKERS = ["o", "s", "^", "D", "v", "P"]
 
 def protocol_marker(protocol):
     return MARKERS[PROTOCOLS.index(protocol) % len(MARKERS)]
+
+
+def flow_levels_present(values):
+    """Níveis presentes nos dados, em ordem de level_sort_key (observados por ano/hora, depois sintéticos)."""
+    return sort_levels(values)
 
 
 def save(figure, plots_dir, file_name):

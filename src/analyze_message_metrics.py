@@ -8,9 +8,11 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .flow_levels import flow_level_ids, flow_per_lane, split_level
+    from .flow_levels import current_result_files, flow_per_lane, is_current_config, split_level
+    from .level_style import add_level_columns, safe_level_sort_key
 except ImportError:
-    from flow_levels import flow_level_ids, flow_per_lane, split_level
+    from flow_levels import current_result_files, flow_per_lane, is_current_config, split_level
+    from level_style import add_level_columns, safe_level_sort_key
 
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES (espelha analyze_stage4_results.py)
@@ -42,7 +44,10 @@ MESSAGE_VECTORS = (
 # ==============================================================================
 def export_message_vectors():
     print("[1/4] Extraindo vetores por mensagem dos arquivos .vec via scavetool...")
-    vec_files = glob.glob(os.path.join(RESULTS_DIR, "*.vec"))
+    vec_files, ignored = current_result_files(glob.glob(os.path.join(RESULTS_DIR, "*.vec")))
+    if ignored:
+        print(f"[AVISO] Ignorando {len(ignored)} arquivo(s) .vec de configs que não estão em conf/flow_levels.json "
+              f"(rodadas antigas), ex.: {os.path.basename(ignored[0])}")
     if not vec_files:
         print(f"[ERRO] Nenhum arquivo .vec encontrado em '{RESULTS_DIR}'. Execute a Etapa 3 com recordMessageVectors = true.")
         return False
@@ -65,7 +70,8 @@ def parse_config(config_str):
     if not isinstance(config_str, str):
         return "Unknown", "Unknown", "Unknown"
 
-    # Exemplo: Config_highway_FF1_AES_h07 (o protocolo pode ter "_", então o nível sai pelo sufixo)
+    # Exemplo: Config_highway_FF1_AES_y2019h07 ou Config_urbanRoad_baseline_s050
+    # (o protocolo pode ter "_", então o nível sai pelo sufixo)
     clean, level = split_level(config_str.removeprefix("Config_"))
 
     topologies = ["highway", "urbanRoad", "intersection"]
@@ -225,14 +231,14 @@ def summarize(per_run):
     flows = {key: scenario_flow_per_lane(*key)
              for key in grouped[["Topology", "Scenario"]].drop_duplicates().itertuples(index=False)}
     grouped["Flow per lane (veh/h/lane)"] = [flows[key] for key in zip(grouped["Topology"], grouped["Scenario"])]
+    grouped = add_level_columns(grouped)
     return sort_by_level(grouped, ["Topology", "Protocol", "Scenario", "Metric"])
 
 
 def sort_by_level(frame, keys):
-    """Ordena pelas chaves com os níveis na ordem de conf/flow_levels.json (níveis desconhecidos no fim)."""
-    rank = {level: index for index, level in enumerate(flow_level_ids())}
+    """Ordena pelas chaves com os níveis em ordem de level_sort_key (observados por ano/hora, depois sintéticos)."""
     return frame.sort_values(
-        keys, key=lambda column: column.map(rank).fillna(len(rank)) if column.name == "Scenario" else column,
+        keys, key=lambda column: column.map(safe_level_sort_key) if column.name == "Scenario" else column,
     ).reset_index(drop=True)
 
 
@@ -266,15 +272,20 @@ def main():
         histograms, moments = {}, {}
 
     print("[4/4] Calculando métricas por execução e resumo entre seeds...")
-    rows = []
+    rows, stale = [], set()
     for run in totals.index.get_level_values("run").unique():
         config = configs.get(run, str(run).split("-")[0])
+        if not is_current_config(config):
+            stale.add(config)
+            continue
         topology, protocol, scenario = parse_config(config)
         rows.append({"run": run, "Topology": topology, "Protocol": protocol, "Scenario": scenario,
                      **run_metrics(run, totals, histograms, moments)})
 
+    if stale:
+        print(f"[AVISO] Ignorando {len(stale)} config(s) fora de conf/flow_levels.json, ex.: {sorted(stale)[:3]}")
     per_run = sort_by_level(pd.DataFrame(rows), ["Topology", "Protocol", "Scenario", "run"])
-    per_run.to_csv(PER_RUN_CSV, index=False)
+    add_level_columns(per_run).to_csv(PER_RUN_CSV, index=False)
     summarize(per_run).to_csv(SUMMARY_CSV, index=False)
     print(f"[OK] Métricas por execução: '{PER_RUN_CSV}'")
     print(f"[OK] Resumo estatístico: '{SUMMARY_CSV}'")
