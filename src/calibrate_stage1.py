@@ -71,7 +71,6 @@ class Calibration:
         years, hours = set(cet["years"]), set(cet["hours"])
         self.volumes = load_hourly_volumes(cet["pce"], years, hours)
         self.speeds = load_hourly_speeds(years, hours)
-        self.calibration_keys = sorted((cet["calibration"]["year"], hour) for hour in cet["calibration"]["hours"])
         self.routes = {
             name: route for name, route in scenarios["routes"].items()
             if topologies is None or route["topology"] in topologies
@@ -87,9 +86,10 @@ class Calibration:
             demand = route.get("demand", OBSERVED)
             if demand not in (OBSERVED, INFERRED):
                 raise ValueError(f"Rota {name}: demand deve ser {OBSERVED!r} ou {INFERRED!r}")
-            missing = [key for key in self.calibration_keys if key not in self.speeds.get(name, {})]
+            calibration_keys = self.calibration_keys(route["topology"])
+            missing = [key for key in calibration_keys if key not in self.speeds.get(name, {})]
             if demand == OBSERVED:
-                missing += [key for key in self.calibration_keys if key not in self.volumes.get(name, {})]
+                missing += [key for key in calibration_keys if key not in self.volumes.get(name, {})]
                 self.flows[name] = {key: value["pce_veh_h"] for key, value in self.volumes.get(name, {}).items()}
             if missing:
                 raise ValueError(f"Rota {name} sem dado CET nos níveis de calibração {[key_id(k) for k in missing]}")
@@ -101,6 +101,12 @@ class Calibration:
             self.keys[topology] = sorted(set.intersection(*(set(self.flows[name]) for name in observed)))
             print(f"[NÍVEIS] {topology}: {len(self.keys[topology])} níveis observados "
                   f"({', '.join(key_id(key) for key in self.keys[topology])})")
+
+    def calibration_keys(self, topology):
+        """Níveis (ano, hora) de calibração da topologia: cet.calibration.hours, ou hours_by_topology[topologia]."""
+        calibration = self.params["cet"]["calibration"]
+        hours = calibration.get("hours_by_topology", {}).get(topology, calibration["hours"])
+        return sorted((calibration["year"], hour) for hour in hours)
 
     def topology_routes(self, topology):
         return {name: route for name, route in self.routes.items() if route["topology"] == topology}
@@ -174,7 +180,7 @@ def coordinate_traffic_lights(calibration):
             continue
         routes = calibration.topology_routes(topology)
         observed = {
-            name: statistics.fmean(calibration.flows[name][key] for key in calibration.calibration_keys)
+            name: statistics.fmean(calibration.flows[name][key] for key in calibration.calibration_keys(topology))
             for name in routes if calibration.demand(name) == OBSERVED
         }
         placeholder = min(observed.values()) / 2
@@ -301,7 +307,7 @@ def infer_demand(calibration, topology, krauss):
 
 def calibration_rmse(calibration, topology, krauss):
     """RMSE (km/h) da velocidade nos níveis de calibração, só nas rotas de demanda observada."""
-    keys = calibration.calibration_keys
+    keys = calibration.calibration_keys(topology)
     seeds = calibration.params["simulation"]["search_seeds"]
     observed = [name for name in calibration.topology_routes(topology) if calibration.demand(name) == OBSERVED]
 
@@ -325,7 +331,7 @@ def calibrate_krauss(calibration, topology, n_trials=None):
     n_trials = n_trials or krauss_params["n_trials"]
     observed = [name for name in calibration.topology_routes(topology) if calibration.demand(name) == OBSERVED]
     reference = statistics.fmean(calibration.target_kmh(name, key)
-                                 for name in observed for key in calibration.calibration_keys)
+                                 for name in observed for key in calibration.calibration_keys(topology))
 
     study = optuna.create_study(
         direction="minimize",
@@ -372,15 +378,52 @@ def calibrate_krauss(calibration, topology, n_trials=None):
 
 
 def error_summary(rows):
+    """RMSE, MAE e viés (km/h) das linhas do relatório; RMSE relativo = RMSE / velocidade CET média das linhas."""
     errors = [row["error_kmh"] for row in rows]
     if not errors:
         return None
+    rmse = math.sqrt(statistics.fmean(error ** 2 for error in errors))
     return {
         "n": len(errors),
-        "rmse_kmh": round(math.sqrt(statistics.fmean(error ** 2 for error in errors)), 3),
+        "rmse_kmh": round(rmse, 3),
+        "relative_rmse": round(rmse / statistics.fmean(row["cet_kmh"] for row in rows), 4),
         "mae_kmh": round(statistics.fmean(abs(error) for error in errors), 3),
         "bias_kmh": round(statistics.fmean(errors), 3),
     }
+
+
+def validation_verdict(rows, max_relative_rmse):
+    """Critério de validação (Khaleghian et al. 2023): RMSE relativo de validação <= max_relative_rmse.
+
+    Só as rotas de demanda observada: a velocidade das rotas de demanda inferida foi usada para achar o fluxo. A
+    topologia passa pelo RMSE relativo de todas as linhas de validação; o resultado por rota é informativo.
+    """
+    validation = [row for row in rows if row["role"] == "validation" and row["demand"] == OBSERVED
+                  and row["error_kmh"] is not None]
+    overall = error_summary(validation)
+    by_route = {}
+    for route in sorted({row["route"] for row in validation}):
+        summary = error_summary([row for row in validation if row["route"] == route])
+        by_route[route] = {**summary, "passed": summary["relative_rmse"] <= max_relative_rmse}
+    return {
+        "criterion": "RMSE relativo da validação (rotas de demanda observada) <= max_relative_rmse",
+        "max_relative_rmse": max_relative_rmse,
+        "relative_rmse": overall["relative_rmse"] if overall else None,
+        "passed": bool(overall) and overall["relative_rmse"] <= max_relative_rmse,
+        "routes": by_route,
+    }
+
+
+def print_verdict(topology, verdict):
+    if verdict["relative_rmse"] is None:
+        print(f"[VALIDAÇÃO] {topology}: sem níveis de validação")
+        return
+    status = "APROVADA" if verdict["passed"] else "REPROVADA"
+    print(f"[VALIDAÇÃO] {topology}: {status} (RMSE relativo {verdict['relative_rmse']:.1%}, "
+          f"limite {verdict['max_relative_rmse']:.0%})")
+    for route, result in verdict["routes"].items():
+        print(f"    {route}: RMSE {result['rmse_kmh']:.1f} km/h, relativo {result['relative_rmse']:.1%}, "
+              f"viés {result['bias_kmh']:+.1f} ({'ok' if result['passed'] else 'acima'}, n={result['n']})")
 
 
 def report(calibration, topology, krauss):
@@ -400,7 +443,7 @@ def report(calibration, topology, krauss):
             for name in sorted(calibration.topology_routes(topology)):
                 target = calibration.target_kmh(name, key)
                 simulated = mean.get(name)
-                if key in calibration.calibration_keys:
+                if key in calibration.calibration_keys(topology):
                     role = "calibration"
                 elif target is not None:
                     role = "validation"
@@ -440,6 +483,8 @@ def report(calibration, topology, krauss):
         if summary[role]:
             print(f"[RELATÓRIO] {topology} {role}: RMSE {summary[role]['rmse_kmh']:.2f} km/h, "
                   f"MAE {summary[role]['mae_kmh']:.2f}, viés {summary[role]['bias_kmh']:+.2f} (n={summary[role]['n']})")
+    summary["verdict"] = validation_verdict(rows, acceptance["max_validation_relative_rmse"])
+    print_verdict(topology, summary["verdict"])
     bad = sorted({row["level"] for row in rows if not row["insertion_ok"]})
     if bad:
         print(f"[AVISO] {topology}: fila de inserção acima de acceptance.* nos níveis {bad}")
@@ -498,9 +543,27 @@ def main():
     parser.add_argument("--smoke", action="store_true",
                         help="Só para testar o código (minutos): 2 trials, simulações de 600 s, bisseção curta, 2 seeds "
                              "no relatório. O resultado não serve como calibração")
+    parser.add_argument("--verdict-only", action="store_true",
+                        help="Não simula: aplica acceptance.max_validation_relative_rmse ao relatório já gravado em "
+                             "conf/krauss_calibration.json")
     args = parser.parse_args()
 
     params = load_calibration_params()
+    if args.verdict_only:
+        output = json.loads(KRAUSS_OUTPUT_PATH.read_text(encoding="utf-8"))
+        for topology, result in sorted(output.items()):
+            if topology == "metadata" or "report" not in result:
+                continue
+            rows = result["report"]["rows"]
+            # Relatórios antigos não têm relative_rmse: recalcula os resumos com as linhas gravadas.
+            observed = [row for row in rows if row["demand"] == OBSERVED and row["error_kmh"] is not None]
+            for role in ("calibration", "validation"):
+                result["report"]["summary"][role] = error_summary([row for row in observed if row["role"] == role])
+            result["report"]["summary"]["verdict"] = validation_verdict(
+                rows, params["acceptance"]["max_validation_relative_rmse"])
+            print_verdict(topology, result["report"]["summary"]["verdict"])
+        KRAUSS_OUTPUT_PATH.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+        return
     if args.smoke:
         params["simulation"].update(seconds=600, warmup_s=120, report_seeds=params["simulation"]["report_seeds"][:2])
         params["flow"]["max_iterations"] = 4

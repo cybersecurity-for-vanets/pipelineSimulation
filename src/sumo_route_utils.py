@@ -16,6 +16,14 @@ DETOUR_SLACK_M = 150
 MIN_END_EDGE_LENGTH_M = 20.0
 # Candidate edges whose bearing differs from the route's travel direction by more than this are dropped.
 MAX_HEADING_DIFF_DEG = 60
+# Straightening: a straight-through replacement may be at most STRAIGHTEN_RATIO * the replaced part + STRAIGHTEN_SLACK_M,
+# and must rejoin the route within STRAIGHTEN_LOOKAHEAD edges.
+STRAIGHTEN_RATIO = 1.3
+STRAIGHTEN_SLACK_M = 30.0
+STRAIGHTEN_LOOKAHEAD = 12
+# On-ramp vehicles start this far upstream of the merge (following single predecessors): SUMO cannot insert a ramp's
+# share of the CET volume on a 35 m ramp edge.
+MIN_RAMP_APPROACH_M = 100.0
 
 
 def import_sumolib():
@@ -218,20 +226,162 @@ def trim_route_ends(net, edge_ids, min_edge_length_m=MIN_END_EDGE_LENGTH_M):
 
     A section endpoint at a junction often maps to a stub of a few metres created by --junctions.join, or to a
     ramp (highway.*_link) next to the main carriageway. Vehicles cannot be inserted on a stub shorter than a car,
-    so the insertion queue grows without bound. Keeps at least two edges.
+    so the insertion queue grows without bound. A leading single-lane edge on a route that has three or more lanes
+    elsewhere is also dropped: it is the cross street where the section starts (Av. Cidade Jardim at the start of Av.
+    Nove de Julho), and inserting the whole CET volume of the avenue on one lane queues it before the section.
+    Keeps at least two edges.
     """
     def droppable(edge_id, has_main):
         edge = net.getEdge(edge_id)
         is_link = edge.getType().endswith("_link")
         return edge.getLength() < min_edge_length_m or (is_link and has_main)
 
+    def passenger_lanes(edge_id):
+        return sum(lane.allows("passenger") for lane in net.getEdge(edge_id).getLanes())
+
     has_main = any(not net.getEdge(edge_id).getType().endswith("_link") for edge_id in edge_ids)
+    wide = max(passenger_lanes(edge_id) for edge_id in edge_ids) >= 3
     edges = list(edge_ids)
-    while len(edges) > 2 and droppable(edges[0], has_main):
+    while len(edges) > 2 and (droppable(edges[0], has_main) or (wide and passenger_lanes(edges[0]) == 1)):
         edges.pop(0)
     while len(edges) > 2 and droppable(edges[-1], has_main):
         edges.pop()
     return edges
+
+
+def _is_turn(edge, following):
+    """True when no connection from edge to following goes straight ('s')."""
+    return "s" not in {connection.getDirection() for connection in edge.getOutgoing().get(following, [])}
+
+
+def count_turns(edges):
+    return sum(_is_turn(edge, following) for edge, following in zip(edges, edges[1:]))
+
+
+def straighten_route(net, edge_ids):
+    """Replaces turns that only switch between parallel carriageways with the straight-through path.
+
+    The point-to-point shortest path can leave a divided avenue through a short cross-street connector and come back
+    on a parallel carriageway (Av. Nove de Julho at Rua Turquia/Rua Alemanha). The CET test car follows the avenue;
+    the artificial turns make the simulated flow yield inside the junction and jam. At each turn, the straight
+    successor is kept when its shortest path rejoins the route within STRAIGHTEN_LOOKAHEAD edges, is not much longer
+    than the part it replaces and has fewer turns.
+    """
+    path = [net.getEdge(edge_id) for edge_id in edge_ids]
+    changed = True
+    while changed:
+        changed = False
+        for index, (edge, following) in enumerate(zip(path, path[1:])):
+            if not _is_turn(edge, following):
+                continue
+            straight = [
+                successor for successor, connections in edge.getOutgoing().items()
+                if successor.allows("passenger") and any(c.getDirection() == "s" for c in connections)
+            ]
+            for successor in straight:
+                for rejoin in range(index + 1, min(index + 1 + STRAIGHTEN_LOOKAHEAD, len(path))):
+                    replacement, _ = net.getShortestPath(successor, path[rejoin], vClass="passenger")
+                    if replacement is None:
+                        continue
+                    replaced = path[index + 1:rejoin + 1]
+                    replacement = list(replacement)
+                    if (sum(e.getLength() for e in replacement)
+                            > STRAIGHTEN_RATIO * sum(e.getLength() for e in replaced) + STRAIGHTEN_SLACK_M):
+                        continue
+                    if count_turns([edge] + replacement) >= count_turns([edge] + replaced):
+                        continue
+                    path = path[:index + 1] + replacement + path[rejoin + 1:]
+                    changed = True
+                    break
+                if changed:
+                    break
+            if changed:
+                break
+    return [edge.getID() for edge in path]
+
+
+def _passenger_lanes(edge):
+    return [lane for lane in edge.getLanes() if lane.allows("passenger")]
+
+
+def _lane_weight(own, other):
+    """Share of a lane that belongs to a ramp: 1 when only the ramp uses it, 0.5 when shared with the route."""
+    if other and not own:
+        return 1.0
+    if other and own:
+        return 0.5
+    return 0.0
+
+
+def route_ramps(net, edge_ids, count_point, max_ramp_veh_h_per_lane):
+    """On/off ramps along a route and the route edge of the CET count point (conf/routes.json `count_point`).
+
+    The CET volume is counted at one point; upstream and downstream of it vehicles enter and leave through ramps.
+    Each ramp gets the share of lanes it uses at the merge or diverge (a lane shared with the route counts half),
+    assuming equal flow per lane, and each on-ramp at most max_ramp_veh_h_per_lane per ramp lane (`max_veh_h`).
+    Only junctions without traffic lights are considered (ramps, not intersections). On-ramps that join the route
+    only through minor (yield) links are left out: at CET flows SUMO finds no gap and none of their vehicles enter.
+    Returns {"count_edge": index, "lanes": [passenger lanes per route edge], "off": [{"after", "edge", "share"}],
+    "on": [{"into", "edge", "share"}]}.
+    """
+    route_set = set(edge_ids)
+    edges = [net.getEdge(edge_id) for edge_id in edge_ids]
+    x, y = net.convertLonLat2XY(count_point[1], count_point[0])
+    count_edge = min(range(len(edges)), key=lambda i: edges[i].getClosestLanePosDist((x, y))[2])
+    off, on = [], []
+    for index, (edge, following) in enumerate(zip(edges, edges[1:])):
+        if edge.getToNode().getType() == "traffic_light":
+            continue
+        weights, counted = {}, 0
+        for lane in edge.getLanes():
+            if not lane.allows("passenger"):
+                continue
+            targets = {c.getTo() for c in lane.getOutgoing()
+                       if c.getDirection() != "t" and c.getTo().allows("passenger")}
+            exits = [t for t in targets if t.getID() not in route_set]
+            if not targets:
+                continue
+            counted += 1
+            weight = _lane_weight(following in targets, bool(exits))
+            for target in exits:
+                weights[target.getID()] = weights.get(target.getID(), 0.0) + weight / len(exits)
+        off += [{"after": index, "edge": exit_id, "share": round(weight / counted, 4)}
+                for exit_id, weight in sorted(weights.items()) if weight > 0]
+
+        weights, counted = {}, 0
+        for lane in following.getLanes():
+            if not lane.allows("passenger"):
+                continue
+            # Entradas que só têm ligação secundária (dê a preferência, estado "m") para a faixa da rota ficam de
+            # fora: no SUMO o veículo da alça espera uma brecha que não aparece com o fluxo CET (> 1.000 veic/h na
+            # faixa) e nenhum entra. Na via real a entrada é em zíper; o volume dela fica com a origem da rota.
+            sources = {c.getFrom() for c in lane.getIncomingConnections()
+                       if c.getDirection() != "t" and c.getFrom().allows("passenger")
+                       and (c.getFrom() == edge or c.getState() != "m")}
+            ramps = [s for s in sources if s.getID() not in route_set]
+            if not sources:
+                continue
+            counted += 1
+            weight = _lane_weight(edge in sources, bool(ramps))
+            for ramp in ramps:
+                weights[ramp.getID()] = weights.get(ramp.getID(), 0.0) + weight / len(ramps)
+        on += [{"into": index + 1, "edge": ramp_id, "approach": _ramp_approach(net, ramp_id, route_set),
+                "share": round(weight / counted, 4),
+                "max_veh_h": max_ramp_veh_h_per_lane * len(_passenger_lanes(net.getEdge(ramp_id)))}
+               for ramp_id, weight in sorted(weights.items()) if weight > 0]
+    return {"count_edge": count_edge, "lanes": [len(_passenger_lanes(edge)) for edge in edges], "off": off, "on": on}
+
+
+def _ramp_approach(net, ramp_id, route_set):
+    """Edges from an insertion point at least MIN_RAMP_APPROACH_M upstream of the merge to the ramp (inclusive)."""
+    path = [net.getEdge(ramp_id)]
+    while sum(edge.getLength() for edge in path) < MIN_RAMP_APPROACH_M:
+        predecessors = [edge for edge in path[0].getIncoming()
+                        if edge.allows("passenger") and edge.getID() not in route_set and edge not in path]
+        if len(predecessors) != 1:
+            break
+        path.insert(0, predecessors[0])
+    return [edge.getID() for edge in path]
 
 
 def build_topology_edge_routes(routes, max_length_ratio_error):
@@ -256,6 +406,13 @@ def build_topology_edge_routes(routes, max_length_ratio_error):
             if edge_ids != mapped_ids:
                 dropped = [edge for edge in mapped_ids if edge not in edge_ids]
                 print(f"[ROTA] {route_name}: {len(dropped)} aresta(s) de ponta removida(s) (tocos de junção ou alças): {dropped}")
+            turns = count_turns([net.getEdge(edge_id) for edge_id in edge_ids])
+            straightened = straighten_route(net, edge_ids)
+            remaining = count_turns([net.getEdge(edge_id) for edge_id in straightened])
+            if straightened != edge_ids:
+                print(f"[ROTA] {route_name}: conversões entre pistas paralelas trocadas pelo movimento direto "
+                      f"({turns} -> {remaining} conversões)")
+                edge_ids = straightened
             edges = [net.getEdge(edge_id) for edge_id in edge_ids]
             lane_count = max(1, round(statistics.median(edge.getLaneNumber() for edge in edges)))
             speed_limits = [edge.getSpeed() * 3.6 for edge in edges if edge.getSpeed() > 0]

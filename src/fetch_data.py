@@ -3,6 +3,11 @@
 Entrada: conf/routes.json (trechos CET MSVP 2019 por topologia, com pontos [lat, lon] em ordem de viagem).
 Saídas: osmFiles/<topologia>.osm e .net.xml, e conf/cet_scenarios.json com as rotas mapeadas.
 
+Depois do mapeamento, network_repair.py corrige a rede ao longo das rotas (faixas que seguem em frente e verde mínimo
+da via principal; network.min_main_green_share e network.min_other_green_s). Rotas com `count_point` em routes.json
+ganham as alças de entrada e saída entre o ponto de contagem CET e as pontas da rota (ver
+sumo_route_utils.route_ramps); generate_routes.py usa essas alças para distribuir o volume.
+
 Os dados de volume e velocidade da CET ficam em conf/cet_volumes.csv e conf/cet_speeds.csv e são lidos na calibração.
 """
 import argparse
@@ -19,9 +24,11 @@ from pathlib import Path
 import requests
 
 try:
-    from .sumo_route_utils import build_topology_edge_routes
+    from .network_repair import repair_network
+    from .sumo_route_utils import build_topology_edge_routes, load_network, network_path, route_ramps
 except ImportError:
-    from sumo_route_utils import build_topology_edge_routes
+    from network_repair import repair_network
+    from sumo_route_utils import build_topology_edge_routes, load_network, network_path, route_ramps
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
@@ -156,7 +163,8 @@ def _api_tiles(bbox, session, depth):
     raise RuntimeError(f"A API do OSM falhou para o bloco {bbox}")
 
 
-def convert_osm_to_net(topology, osm_path):
+def convert_osm_to_net(topology, osm_path, join_nodes=()):
+    """netconvert do .osm. join_nodes: grupos de nós OSM unidos numa só junção (network.join_nodes)."""
     netconvert = os.environ.get("NETCONVERT_BINARY") or shutil.which("netconvert")
     if not netconvert:
         raise FileNotFoundError("netconvert não está no PATH; defina NETCONVERT_BINARY")
@@ -172,7 +180,15 @@ def convert_osm_to_net(topology, osm_path):
         "--junctions.join", "true",
         # Só os semáforos mapeados no OSM: --tls.guess cria semáforos de 90 s sem coordenação.
     ]
+    node_file = None
+    if join_nodes:
+        node_file = OSM_DIR / f"{TOPOLOGY_FILE_NAMES.get(topology, topology)}.join.nod.xml"
+        node_file.write_text("<nodes>\n" + "".join(f'    <join nodes="{" ".join(group)}"/>\n' for group in join_nodes)
+                             + "</nodes>\n", encoding="utf-8")
+        command += ["--node-files", str(node_file)]
     result = subprocess.run(command, capture_output=True, text=True, cwd=BASE_DIR)
+    if node_file:
+        node_file.unlink()
     if result.returncode != 0:
         raise RuntimeError(f"netconvert falhou para '{topology}': {result.stderr.strip()}")
     print(f"[SUMO] {topology}: rede salva em {net_path}")
@@ -202,7 +218,7 @@ def main():
             osm_path = download_osm_map(topology, bbox)
         elif not osm_path.is_file():
             raise FileNotFoundError(f"{osm_path} não existe; rode sem --skip-download")
-        convert_osm_to_net(topology, osm_path)
+        convert_osm_to_net(topology, osm_path, params["network"].get("join_nodes", {}).get(topology, []))
 
     print("=== Etapa 1.1: mapeamento das rotas CET na rede SUMO ===")
     edge_routes = build_topology_edge_routes(routes, params["network"]["max_length_ratio_error"])
@@ -220,6 +236,22 @@ def main():
         print(f"[OK] {name}: {len(mapped['edges'])} arestas, {mapped['sumo_length_m']:.0f} m "
               f"(CET {route.get('cet_distance_m', 0):.0f} m), {mapped['lanes_per_direction']} faixa(s), "
               f"{mapped['speed_limit_kmh']:.0f} km/h")
+
+    print("=== Etapa 1.1: reparos da rede ao longo das rotas ===")
+    for topology in sorted({route["topology"] for route in output_routes.values()}):
+        topology_routes = {name: route for name, route in output_routes.items() if route["topology"] == topology}
+        repair_network(network_path(topology), topology_routes, params["network"])
+        counted = {name: route for name, route in topology_routes.items() if route.get("count_point")}
+        if counted:
+            net, _ = load_network(topology)
+            for name, route in counted.items():
+                ramps = route_ramps(net, route["sumo_edges"], route["count_point"],
+                                    params["network"]["max_ramp_veh_h_per_lane"])
+                route["ramps"] = ramps
+                print(f"[ALÇAS] {name}: contagem na aresta {ramps['count_edge']} "
+                      f"({route['sumo_edges'][ramps['count_edge']]}); "
+                      f"entradas {[(r['edge'], r['share']) for r in ramps['on']]}; "
+                      f"saídas {[(r['edge'], r['share']) for r in ramps['off']]}")
 
     output = {
         "source": routes_config.get("source", "CET MSVP 2019"),

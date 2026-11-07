@@ -50,6 +50,13 @@ def validate_calibration_params(params):
         raise CalibrationParamsError("cet.calibration.year deve estar em cet.years")
     if not set(_hours(params, "cet.calibration.hours")) <= set(hours):
         raise CalibrationParamsError("cet.calibration.hours deve estar contido em cet.hours")
+    by_topology = params["cet"]["calibration"].get("hours_by_topology", {})
+    if not isinstance(by_topology, dict):
+        raise CalibrationParamsError("cet.calibration.hours_by_topology deve ser objeto {topologia: [horas]}")
+    for topology in by_topology:
+        topology_hours = _hours(params, f"cet.calibration.hours_by_topology.{topology}")
+        if not set(topology_hours) <= set(hours):
+            raise CalibrationParamsError(f"cet.calibration.hours_by_topology.{topology} deve estar contido em cet.hours")
     if _field(params, "cet.synthetic.reference_year") not in years:
         raise CalibrationParamsError("cet.synthetic.reference_year deve estar em cet.years")
     factors = _field(params, "cet.synthetic.factors")
@@ -62,6 +69,18 @@ def validate_calibration_params(params):
     ratio = _field(params, "network.max_length_ratio_error")
     if not _is_number(ratio) or not 0 < ratio < 1:
         raise CalibrationParamsError("network.max_length_ratio_error deve ficar entre 0 e 1")
+
+    share = _field(params, "network.min_main_green_share")
+    if not _is_number(share) or not 0 < share < 1:
+        raise CalibrationParamsError("network.min_main_green_share deve ficar entre 0 e 1")
+    _check_number(_field(params, "network.min_other_green_s"), "network.min_other_green_s", minimum_exclusive=0)
+    _check_number(_field(params, "network.max_ramp_veh_h_per_lane"), "network.max_ramp_veh_h_per_lane",
+                  minimum_exclusive=0)
+    joins = params["network"].get("join_nodes", {})
+    if not isinstance(joins, dict) or not set(joins) <= set(TOPOLOGIES) or not all(
+            _is_list(groups) and all(_is_list(group) and len(group) >= 2 and all(isinstance(node, str) for node in group)
+                                     for group in groups) for groups in joins.values()):
+        raise CalibrationParamsError("network.join_nodes deve ser {topologia: [[nó OSM, nó OSM, ...], ...]}")
 
     signal = _field(params, "topologies.signal_coordinated")
     if not _is_list(signal) or not set(signal) <= set(TOPOLOGIES):
@@ -80,6 +99,9 @@ def validate_calibration_params(params):
     _seeds(params, "simulation.report_seeds", minimum=2)
 
     _check_number(_field(params, "acceptance.max_depart_delay_s"), "acceptance.max_depart_delay_s", minimum_exclusive=0)
+    limit = _field(params, "acceptance.max_validation_relative_rmse")
+    if not _is_number(limit) or not 0 < limit < 1:
+        raise CalibrationParamsError("acceptance.max_validation_relative_rmse deve ficar entre 0 e 1")
     waiting = _field(params, "acceptance.max_waiting_fraction")
     if not _is_number(waiting) or not 0 <= waiting < 1:
         raise CalibrationParamsError("acceptance.max_waiting_fraction deve ficar entre 0 e 1")
@@ -173,7 +195,8 @@ def main():
     print(f"[OK] {PARAMS_PATH} é válido")
     cet = params["cet"]
     print(f"Anos CET: {cet['years']}; horas: {cet['hours']}")
-    print(f"Calibração: {cet['calibration']['year']}, horas {cet['calibration']['hours']}; "
+    print(f"Calibração: {cet['calibration']['year']}, horas {cet['calibration']['hours']} "
+          f"(por topologia: {cet['calibration'].get('hours_by_topology', {})}); "
           "validação: todas as demais horas e anos observados")
     print(f"Níveis sintéticos: {cet['synthetic']['factors']} × fluxo médio de {cet['synthetic']['reference_year']}")
     print(f"Krauss: {len(params['krauss']['bounds'])} parâmetros livres de {len(KRAUSS_KEYS)}")

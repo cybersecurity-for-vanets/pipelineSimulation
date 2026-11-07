@@ -46,10 +46,114 @@ def load_json(path, required=True):
         return json.load(source)
 
 
+def _ramp_flows(edges, ramps, flow):
+    """Fluxo na primeira aresta, em cada alça de entrada e fração de cada saída, com `flow` na aresta ramps.count_edge.
+
+    Uma entrada leva `share` do fluxo da aresta em que entra, limitado a `max_veh_h` (faixas da alça ×
+    network.max_ramp_veh_h_per_lane); o que passa do limite fica com a origem da via principal.
+
+    As frações das saídas vêm da divisão das faixas, que não diz quanto sai de fato. Antes do ponto de contagem, cada
+    saída aumenta o fluxo que tem de entrar pela origem; com as frações cheias, as arestas a montante ficam acima de
+    2.000 veic/h/faixa e a fila de inserção, não o modelo de seguimento, define a velocidade. A CET mediu tráfego
+    fluindo no ponto de contagem, então as saídas antes da contagem são reduzidas na mesma proporção (bisseção) até
+    nenhuma aresta da rota receber mais veic/h por faixa que ele. Se nem sem essas saídas isso vale (uma aresta com
+    menos faixas entre a última entrada e a contagem), elas ficam zeradas. Sem `lanes` em ramps, não há limite.
+    Devolve (fluxo na origem, {entrada: veic/h}, {saída: fração}).
+    """
+    count = len(edges)
+    lanes = ramps.get("lanes")
+    count_edge = ramps["count_edge"]
+
+    def solve(upstream_scale):
+        off_shares = [ramp["share"] * (upstream_scale if ramp["after"] < count_edge else 1.0) for ramp in ramps["off"]]
+        off_share = [0.0] * count
+        for ramp, share in zip(ramps["off"], off_shares):
+            off_share[ramp["after"]] += share
+        fixed = {}
+
+        def forward(start):
+            flows, ramp_flows = [start], {}
+            for index in range(1, count):
+                arriving = flows[-1] * (1 - off_share[index - 1])
+                entering = [k for k, ramp in enumerate(ramps["on"]) if ramp["into"] == index]
+                proportional = sum(ramps["on"][k]["share"] for k in entering if k not in fixed)
+                if proportional >= 1:
+                    raise ValueError(f"Alças de entrada com fração >= 1 na aresta {edges[index]}")
+                total = (arriving + sum(fixed[k] for k in entering if k in fixed)) / (1 - proportional)
+                for k in entering:
+                    ramp_flows[k] = fixed.get(k, total * ramps["on"][k]["share"])
+                flows.append(total)
+            return flows, ramp_flows
+
+        for _ in range(len(ramps["on"]) + 1):
+            base, _ = forward(0.0)
+            unit, _ = forward(1.0)
+            start = (flow - base[count_edge]) / (unit[count_edge] - base[count_edge])
+            flows, ramp_flows = forward(start)
+            over = {k: ramps["on"][k]["max_veh_h"] for k, value in ramp_flows.items()
+                    if k not in fixed and value > ramps["on"][k].get("max_veh_h", float("inf"))}
+            if not over:
+                return max(start, 0.0), ramp_flows, dict(enumerate(off_shares)), flows
+            fixed.update(over)
+        raise RuntimeError("Distribuição das alças não convergiu")
+
+    def overloaded(flows):
+        limit = flow / lanes[count_edge] * (1 + 1e-6)
+        return any(value / lane_count > limit for value, lane_count in zip(flows, lanes) if lane_count)
+
+    result = solve(1.0)
+    if not lanes or not overloaded(result[3]):
+        return result[:3]
+    low, high = 0.0, 1.0
+    if overloaded(solve(0.0)[3]):
+        return solve(0.0)[:3]
+    for _ in range(30):
+        middle = (low + high) / 2
+        low, high = (middle, high) if not overloaded(solve(middle)[3]) else (low, middle)
+    return solve(low)[:3]
+
+
+def route_demands(route_data, flow):
+    """[(sufixo do id, arestas, veic/h)] de uma rota: a viagem inteira e, com alças, as que entram ou saem por elas.
+
+    Sem `ramps` (conf/cet_scenarios.json), flow é o fluxo da rota inteira. Com `ramps` (rotas com count_point em
+    conf/routes.json), flow é o volume no ponto de contagem CET (ramps.count_edge). Cada alça leva a fração das faixas
+    que usa (sumo_route_utils.route_ramps): uma saída depois da aresta i tira `share` do fluxo da aresta i; uma
+    entrada na aresta i responde por `share` do fluxo da aresta i, até `max_veh_h`. Quem sai por uma alça é uma fração
+    igual do fluxo presente, qualquer que seja a origem. O sufixo vazio é a viagem inteira, a única usada na
+    velocidade da calibração.
+    """
+    edges = route_data["sumo_edges"]
+    ramps = route_data.get("ramps")
+    if not ramps or not (ramps["on"] or ramps["off"]):
+        return [("", edges, flow)]
+    start, ramp_flows, off_shares = _ramp_flows(edges, ramps, flow)
+    off_share = [0.0] * len(edges)
+    for k, ramp in enumerate(ramps["off"]):
+        off_share[ramp["after"]] += off_shares[k]
+    origins = [("", [], 0, start)] + [
+        (f"__in_{safe_id(ramp['edge'])}", ramp.get("approach", [ramp["edge"]]), ramp["into"], ramp_flows[k])
+        for k, ramp in enumerate(ramps["on"])
+    ]
+    demands = []
+    for tag, prefix, first, origin_flow in origins:
+        surviving = 1.0
+        for index in range(first, len(edges) - 1):
+            for k, ramp in enumerate(ramps["off"]):
+                if ramp["after"] != index:
+                    continue
+                demands.append((f"{tag}__out_{safe_id(ramp['edge'])}", prefix + edges[first:index + 1] + [ramp["edge"]],
+                                origin_flow * surviving * off_shares[k]))
+            surviving *= 1 - off_share[index]
+        demands.append((tag, prefix + edges[first:], origin_flow * surviving))
+    return demands
+
+
 def build_route_file(topology, routes, flow_rate, krauss, route_flows=None):
     """flow_rate is veh/h/lane; route_flows optionally overrides it per route with total veh/h.
 
     krauss holds the car-following parameters plus speedFactor and speedDev; a route's own speed_factor wins.
+    Routes with ramps (route_demands) get one flow per entry/exit pair; the whole-route flow keeps the id flow_<route>.
     """
     route_flows = route_flows or {}
     root = ET.Element("routes")
@@ -60,8 +164,6 @@ def build_route_file(topology, routes, flow_rate, krauss, route_flows=None):
             raise ValueError(f"Route '{route_name}' has no connected SUMO edge path")
 
         suffix = safe_id(route_name)
-        route_id = f"route_{suffix}"
-        flow_id = f"flow_{suffix}"
         vehicle_type_id = f"car_{suffix}"
         ET.SubElement(root, "vType", {
             "id": vehicle_type_id,
@@ -77,17 +179,21 @@ def build_route_file(topology, routes, flow_rate, krauss, route_flows=None):
             "speedFactor": str(route_data.get("speed_factor", krauss.get("speedFactor", 1))),
             "speedDev": str(krauss.get("speedDev", 0.1)),
         })
-        ET.SubElement(root, "route", {"id": route_id, "edges": " ".join(edges)})
-        ET.SubElement(root, "flow", {
-            "id": flow_id,
-            "type": vehicle_type_id,
-            "route": route_id,
-            "begin": "0",
-            "end": str(ROUTE_END_SECONDS),
-            "vehsPerHour": str(route_flows.get(route_name, flow_rate * route_data["lanes_per_direction"])),
-            "departLane": "allowed",
-            "departSpeed": "max",
-        })
+        flow = route_flows.get(route_name, flow_rate * route_data["lanes_per_direction"])
+        for tag, demand_edges, veh_h in route_demands(route_data, flow):
+            if tag and veh_h < 0.5:
+                continue
+            ET.SubElement(root, "route", {"id": f"route_{suffix}{tag}", "edges": " ".join(demand_edges)})
+            ET.SubElement(root, "flow", {
+                "id": f"flow_{suffix}{tag}",
+                "type": vehicle_type_id,
+                "route": f"route_{suffix}{tag}",
+                "begin": "0",
+                "end": str(ROUTE_END_SECONDS),
+                "vehsPerHour": f"{veh_h:.1f}" if isinstance(veh_h, float) else str(veh_h),
+                "departLane": "allowed",
+                "departSpeed": "max",
+            })
 
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 

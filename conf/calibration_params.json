@@ -10,12 +10,16 @@
     },
     "years": [2016, 2017, 2018, 2019],
     "hours": [7, 8, 9, 17, 18, 19],
-    "calibration": {"year": 2019, "hours": [17, 18, 19]},
+    "calibration": {"year": 2019, "hours": [7, 8, 9, 17, 18, 19], "hours_by_topology": {"intersection": [7, 9, 17, 19]}},
     "synthetic": {"reference_year": 2019, "factors": [0.25, 0.5, 0.75, 1.25]}
   },
   "network": {
     "map_margin_km": 0.4,
-    "max_length_ratio_error": 0.15
+    "max_length_ratio_error": 0.15,
+    "min_main_green_share": 0.55,
+    "min_other_green_s": 10,
+    "max_ramp_veh_h_per_lane": 1800,
+    "join_nodes": {"intersection": [["1389167160", "1389167162"]]}
   },
   "topologies": {
     "signal_coordinated": ["urban_road", "intersection"]
@@ -34,7 +38,8 @@
   },
   "acceptance": {
     "max_depart_delay_s": 90,
-    "max_waiting_fraction": 0.01
+    "max_waiting_fraction": 0.01,
+    "max_validation_relative_rmse": 0.25
   },
   "krauss": {
     "default": {"accel": 2.6, "decel": 4.5, "tau": 1.0, "sigma": 0.5, "minGap": 2.5, "speedFactor": 1.0, "speedDev": 0.1},

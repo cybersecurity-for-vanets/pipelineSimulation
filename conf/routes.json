@@ -1,11 +1,12 @@
 {
-  "source": "CET MSVP 2019 (docs/relatorio-msvp-2019-revisao-2-junho-22.pdf); pontos [lat, lon] em ordem de viagem, tirados do OSM nas extremidades dos trechos de velocidade",
+  "source": "CET MSVP 2019 (docs/relatorio-msvp-2019-revisao-2-junho-22.pdf); pontos [lat, lon] em ordem de viagem, tirados do OSM nas extremidades dos trechos de velocidade; count_point: ponto de contagem de volume da CET (Viad. Beneficência Portuguesa, OSM), usado para distribuir o volume pelas alças",
   "topologies": {
     "highway": {
       "name": "Av. 23 de Maio, Vd. Brig. Luís Antônio – Vd. do Paraíso",
       "routes": {
         "highway_centro": {
           "via": "Av. Vinte e Três de Maio",
+          "count_point": [-23.568600, -46.640800],
           "sentido": "Centro",
           "trecho": "Vd. Paraíso → Vd. Brig. Luís Antônio",
           "cet_distance_m": 2498,
@@ -14,6 +15,7 @@
         },
         "highway_bairro": {
           "via": "Av. Vinte e Três de Maio",
+          "count_point": [-23.568600, -46.640800],
           "sentido": "Bairro",
           "trecho": "Vd. Brig. Luís Antônio → Vd. Paraíso",
           "cet_distance_m": 2498,
