@@ -7,11 +7,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 try:
-    from .flow_levels import current_result_files, flow_per_lane, is_current_config, level_label, split_level
+    from .flow_levels import current_result_files, flow_per_lane, is_current_config, level_label, level_los, split_level
     from .level_style import (add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key)
     from .protocols import load_protocols
 except ImportError:
-    from flow_levels import current_result_files, flow_per_lane, is_current_config, level_label, split_level
+    from flow_levels import current_result_files, flow_per_lane, is_current_config, level_label, level_los, split_level
     from level_style import (add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key)
     from protocols import load_protocols
 
@@ -328,7 +328,12 @@ def plot_processing_histograms(summary):
             # Log scale: the peak bin dwarfs the tails, which would otherwise disappear.
             ax.set_yscale("log")
             ax.grid(axis='y', linestyle='--', alpha=0.7)
-            ax.set_title(f"{topology}: {level_label(flow)}\n{per_lane:.0f} veh/h/faixa", fontsize=9)
+            try:
+                los = level_los(topology, flow)
+            except (KeyError, FileNotFoundError):
+                los = None
+            los_text = f"LOS {los}, " if los else ""
+            ax.set_title(f"{topology}: {los_text}{level_label(flow)}\n{per_lane:.0f} veh/h/faixa", fontsize=9)
             if col == 0:
                 ax.set_ylabel(row_names[row])
             if row == len(row_names) - 1:

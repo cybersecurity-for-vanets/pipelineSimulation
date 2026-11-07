@@ -81,11 +81,12 @@ def read_trip_metrics(tripinfo_path, route_names, min_depart=0.0):
     return metrics
 
 
-def run_sumo(topology, routes, krauss, route_flows, seconds, seed, read_outputs, extra_args=()):
+def run_sumo(topology, routes, krauss, route_flows, seconds, seed, read_outputs, extra_args=(), additional_xml=None):
     """Uma simulação; read_outputs(pasta) lê as saídas antes de a pasta temporária ser apagada.
 
     A pasta tem tripinfo.xml e statistics.xml; extra_args pode pedir outras saídas dentro dela, com caminhos
-    relativos a ela (o SUMO roda com cwd na pasta temporária).
+    relativos a ela (o SUMO roda com cwd na pasta temporária). additional_xml é o texto de um arquivo adicional
+    (por exemplo, <edgeData>) carregado junto com os offsets dos semáforos.
     """
     if not SUMO_BINARY:
         raise FileNotFoundError("Binário do SUMO não encontrado; defina SUMO_BINARY ou coloque sumo no PATH")
@@ -112,8 +113,12 @@ def run_sumo(topology, routes, krauss, route_flows, seconds, seed, read_outputs,
             "--duration-log.disable", "true",
             *extra_args,
         ]
-        if tls_offsets_path(topology).is_file():
-            command += ["--additional-files", str(tls_offsets_path(topology))]
+        additional = [str(tls_offsets_path(topology))] if tls_offsets_path(topology).is_file() else []
+        if additional_xml:
+            (tmp_path / "extra.add.xml").write_text(additional_xml, encoding="utf-8")
+            additional.append(str(tmp_path / "extra.add.xml"))
+        if additional:
+            command += ["--additional-files", ",".join(additional)]
         result = subprocess.run(command, capture_output=True, text=True, cwd=tmp_path)
         if result.returncode != 0:
             raise RuntimeError(f"SUMO falhou na topologia {topology}: {result.stderr.strip()}")

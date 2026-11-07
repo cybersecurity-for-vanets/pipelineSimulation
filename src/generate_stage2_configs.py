@@ -6,11 +6,11 @@ import xml.etree.ElementTree as ET
 try:
     from .protocols import load_cam_model, load_crypto_timings, load_protocols
     from .generate_routes import SUMO_STEP_LENGTH
-    from .flow_levels import level_label, parse_level, topology_level_ids
+    from .flow_levels import level_label, level_los, parse_level, topology_level_ids
 except ImportError:
     from protocols import load_cam_model, load_crypto_timings, load_protocols
     from generate_routes import SUMO_STEP_LENGTH
-    from flow_levels import level_label, parse_level, topology_level_ids
+    from flow_levels import level_label, level_los, parse_level, topology_level_ids
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENARIOS_CONF_PATH = os.path.join(BASE_DIR, "conf", "coordinates_scenaries.json")
@@ -59,11 +59,13 @@ def get_topology_bounds(topology):
     min_x, min_y, max_x, max_y = map(float, location.get("convBoundary").split(","))
     return min_x, min_y, max_x, max_y
 
-def level_description(level):
-    """Texto do nível no cabeçalho de cada config: 'Fluxo CET 07h–08h/2019 (y2019h07)' ou 'Fluxo sintético 0,50× (s050)'."""
+def level_description(topology, level):
+    """Texto do nível no cabeçalho de cada config: 'LOS C, demanda 0,45× do pico CET (s045)' ou 'Fluxo CET ...'."""
     info = parse_level(level)
     if info["kind"] == "synthetic":
-        return f"Fluxo sintético {info['factor']:.2f}× ({level})".replace(".", ",")
+        los = level_los(topology, level)
+        prefix = f"LOS {los}, " if los else ""
+        return f"{prefix}demanda {info['factor']:.2f}× do pico CET ({level})".replace(".", ",")
     return f"Fluxo CET {level_label(level)} ({level})"
 
 def scenario_levels(scenarios):
@@ -81,7 +83,7 @@ def scenario_levels(scenarios):
 def generate_omnetpp_ini():
     with open(SCENARIOS_CONF_PATH, "r", encoding="utf-8") as f:
         scenarios = list(json.load(f).keys())
-    # Níveis por topologia: observados (y<ano>h<hora>) e sintéticos (s<fator×100>), em ordem de level_sort_key.
+    # Níveis por topologia: um por LOS do HCM (s<fator×100>), em ordem de level_sort_key.
     levels_by_topology = scenario_levels(scenarios)
     protocols = load_protocol_profiles()
     cam_model = load_cam_model()
@@ -237,7 +239,7 @@ network = RSUExampleScenario
                 
                 ini_content += f"""
 # ------------------------------------------------------------------------------
-# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | {level_description(flow)}
+# [{count}/{total_configs}] Topologia: {top} | Protocolo: {proto_name} | {level_description(top, flow)}
 # ------------------------------------------------------------------------------
 [Config {config_name}]
 description = "{top} - {proto_name} - {flow}"

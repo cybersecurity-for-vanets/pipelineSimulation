@@ -95,14 +95,44 @@ O método segue Khaleghian et al. (SMARTCOMP 2023, resumo em `docs/resumo_calibr
 
 Cada nível é uma simulação SUMO de uma hora, com `simulation.seconds` e demanda constante. Entram as viagens com partida pretendida depois de `simulation.warmup_s`, e o tempo de viagem inclui o `departDelay` (ver `calibration/simulation.py`).
 
+## Nível de serviço (HCM) por demanda
+
+`src/map_los.py` (2026-11-06) simula o modelo calibrado com demanda = fator × fluxo médio de 2019 de cada rota (`los.factors`, 0,1× a 1,5×; 3 seeds) e classifica cada fator pelo nível de serviço do HCM 6ª/7ª ed. A medida muda com o tipo de via, como no HCM:
+
+- **highway** (basic freeway segment): densidade nas rotas da 23 de Maio (cp/km/faixa); limites A–E 7, 11, 16, 22 e 28.
+- **urban_road** (urban street segment): velocidade de percurso das viagens inteiras ÷ velocidade de fluxo livre (limite × `speedFactor`); limites 80, 67, 50, 40 e 30%.
+- **intersection** (signalized intersection): atraso por semáforo (timeLoss + departDelay ÷ semáforos da rota), médio entre os veículos das 4 rotas; limites 10, 20, 35, 55 e 80 s.
+
+Fila de inserção acima de `acceptance.*` (demanda acima da capacidade da rede) vale LOS F, como v/c > 1. Os limites ficam em `los.*` de `conf/calibration_params.json` e o resultado em `conf/los_sweep.json`.
+
+| LOS | highway (fator; veic/h/faixa) | urban_road | intersection |
+|---|---|---|---|
+| A | 0,1–0,2 (144–288) | não alcançado | 0,1–0,3 (33–100) |
+| B | 0,3 (432) | não alcançado | 0,4–0,6 (133–199) |
+| C | 0,4 (577) | 0,1–0,8 (56–446) | 0,7 (232) |
+| D | 0,5–0,6 (721–865) | 0,9 (502) | não alcançado |
+| E | 0,7–0,8 (1.009–1.153) | 1,0 (558) | não alcançado |
+| F | ≥ 0,9 (≥ 1.297); fila de inserção a partir de 1,2 (1.730) | ≥ 1,1 (≥ 614), com fila | ≥ 0,8 (≥ 265), com fila |
+
+- **highway.** A velocidade fica em 37–41 km/h até 1,1× (desejada: 60 km/h × `speedFactor` 0,72), e a densidade cresce quase linear com o fluxo. A 40 km/h, o mesmo fluxo dá ~2,5× a densidade de uma freeway a 100 km/h, por isso o LOS F pelo limite de densidade começa em 0,9×, antes da capacidade da rede (fila de inserção a partir de 1,2×). A 23 de Maio fica fora da faixa de aplicação do método de freeway (fluxo livre de 90–120 km/h); a classificação é indicativa.
+- **urban_road.** Com 12 semáforos em 1,8 km, a velocidade de percurso fica em ~57% do fluxo livre mesmo com pouca demanda: pelo HCM, a densidade de semáforos já põe a via em LOS C, e A e B não existem. O pico da CET (1,0×) é LOS E.
+- **intersection.** O atraso sobe devagar até 0,7× e salta para LOS F em 0,8×, quando a Nove de Julho sentido bairro passa da capacidade (velocidade de 13,8 para 7,5 km/h e fila de inserção). D e E ficam entre 0,7× e 0,8× e não aparecem na grade de fatores. O pico da CET (1,0×) é LOS F.
+
 ## Níveis de fluxo do experimento V2V
 
-Cada nível vira um cenário do experimento V2V (`conf/flow_levels.json`, contrato em `src/flow_levels.py`):
+Desde 2026-11-06, cada cenário do experimento V2V é um nível de serviço do HCM (seção anterior), não um ano e hora da CET (`conf/flow_levels.json`, contrato em `src/flow_levels.py`). Os volumes observados de cada ano e hora serviram à calibração e à validação; o perfil calibrado já carrega essa informação, e os 18 níveis observados por topologia caíam quase todos em LOS E/F.
 
-- **Observados (`y<ano>h<hora>`).** Cada ano e hora em que todas as rotas de demanda observada da topologia têm volume CET: 18 na highway (2016, 2018, 2019), 18 na urban_road (2017, 2018, 2019) e 6 na intersection (2019). Na São Gabriel, os níveis sem velocidade CET usam o fluxo inferido na mesma hora de 2019.
-- **Sintéticos (`s<fator×100>`).** `cet.synthetic.factors` (0,25×, 0,50×, 0,75× e 1,25×) × o fluxo médio de cada rota nos níveis de `cet.synthetic.reference_year` (2019). Não têm observação. Servem para cobrir volumes que a CET não pesquisou: todas as horas da CET são de pico, então os níveis observados ficam numa faixa estreita. Nos gráficos, os pontos sintéticos aparecem com marcação própria.
+Cada LOS alcançado na topologia tem um nível `s<fator×100>`: fator × o fluxo médio de cada rota nos níveis de `cet.synthetic.reference_year` (2019). `map_los.representative_levels` escolhe o fator: o pico CET (1,00×, `s100`) representa o LOS em que cai; os demais LOS ficam com o meio do intervalo de fatores classificados neles (arredondado a 0,05); o LOS F, quando o pico não é F, fica com `los.saturated_factor` (1,2×). A varredura fina (0,72–0,78× na intersection, 0,92–1,05× na urban_road) refinou as fronteiras.
 
-São 22 níveis na highway, 22 na urban_road e 10 na intersection: 54 cenários × 4 protocolos × 10 seeds = 2.160 simulações OMNeT++.
+| Topologia | Níveis (LOS: fator, veic/h/faixa) |
+|---|---|
+| highway | A: 0,15× (216) · B: 0,30× (432) · C: 0,40× (576) · D: 0,55× (793) · E: 0,75× (1.081) · F: 1,00× pico CET (1.441) |
+| urbanRoad | C: 0,45× (251) · D: 0,95× (530) · E: 1,00× pico CET (558) · F: 1,20× (670) |
+| intersection | A: 0,20× (66) · B: 0,50× (166) · C: 0,70× (232) · F: 1,00× pico CET (332) |
+
+A intersection não tem D nem E: o atraso passa de 32 s (LOS C, 0,74×) para fila de inserção em 0,76×, quando a Nove de Julho sentido bairro passa da capacidade. Na urbanRoad, D cobre só 0,90–0,96×, então D e E ficam próximos (530 e 558 veic/h/faixa). Só o nível de pico (1,00×) está na faixa de demanda validada; os demais são extrapolação do perfil calibrado.
+
+São 14 cenários × 4 protocolos × 10 seeds = 560 simulações OMNeT++.
 
 ## Limitações
 

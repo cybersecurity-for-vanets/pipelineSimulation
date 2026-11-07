@@ -1,7 +1,12 @@
-"""Etapa 1.3: rotas SUMO de cada nível de fluxo (observado: ano e hora CET; ou sintético) e conf/flow_levels.json.
+"""Etapa 1.4: rotas SUMO de cada nível de demanda do experimento V2V e conf/flow_levels.json.
+
+Os níveis são um por nível de serviço (LOS) do HCM alcançado na topologia: fator × fluxo médio de cada rota nos
+níveis observados de cet.synthetic.reference_year, com os fatores escolhidos por map_los.py (conf/los_sweep.json,
+"levels"). O fator 1,0 é o pico CET (média das horas observadas). Os volumes observados de cada ano e hora ficaram na
+calibração e não viram cenário.
 
 Entradas: conf/cet_scenarios.json (fetch_data.py), conf/route_flows_calibrated.json e
-conf/krauss_calibration.json (calibrate_stage1.py), cet.synthetic de conf/calibration_params.json.
+conf/krauss_calibration.json (calibrate_stage1.py), conf/los_sweep.json (map_los.py).
 Saídas: trafficXmlFiles/<topologia>_<nível>.rou.xml e .sumocfg, e conf/flow_levels.json (contrato em flow_levels.py).
 """
 import json
@@ -18,6 +23,7 @@ TRAFFIC_DIR = BASE_DIR / "trafficXmlFiles"
 SCENARIOS_PATH = CONF_DIR / "cet_scenarios.json"
 KRAUSS_CALIBRATION_PATH = CONF_DIR / "krauss_calibration.json"
 ROUTE_FLOWS_PATH = CONF_DIR / "route_flows_calibrated.json"
+LOS_SWEEP_PATH = CONF_DIR / "los_sweep.json"
 TOPOLOGY_FILE_NAMES = {"urban_road": "urbanRoad"}
 ROUTE_END_SECONDS = 3600
 # SUMO step and Veins TraCI update interval: ETSI CAM triggers are checked every 100 ms.
@@ -231,7 +237,7 @@ def generate_sumo_files():
     from flow_levels import FLOW_LEVELS_PATH, level_label, level_sort_key, level_year, synthetic_level_id
 
     params = load_calibration_params()
-    synthetic = params["cet"]["synthetic"]
+    reference_year = params["cet"]["synthetic"]["reference_year"]
     routes = load_json(SCENARIOS_PATH)["routes"]
     if not routes:
         raise ValueError(f"{SCENARIOS_PATH} não tem rotas; rode fetch_data.py")
@@ -239,18 +245,28 @@ def generate_sumo_files():
     krauss_profiles = load_json(KRAUSS_CALIBRATION_PATH)
     if krauss_profiles.get("metadata", {}).get("smoke"):
         print("[AVISO] krauss_calibration.json veio de calibrate_stage1.py --smoke: não é uma calibração válida.")
+    if not LOS_SWEEP_PATH.is_file():
+        raise FileNotFoundError(f"{LOS_SWEEP_PATH} não existe; rode src/map_los.py")
+    los_sweep = load_json(LOS_SWEEP_PATH)
 
     missing = set(routes) - set(calibrated)
     if missing:
         raise ValueError(f"Sem fluxo calibrado para {sorted(missing)}; rode calibrate_stage1.py")
 
     TRAFFIC_DIR.mkdir(parents=True, exist_ok=True)
+    for old in TRAFFIC_DIR.glob("*.rou.xml"):
+        old.unlink()
+    for old in TRAFFIC_DIR.glob("*.sumocfg"):
+        old.unlink()
     topologies = {}
     for topology in sorted({route["topology"] for route in routes.values()}):
         topology_routes = {name: route for name, route in routes.items() if route["topology"] == topology}
         profile = krauss_profiles.get(topology)
         if not profile or "levels" not in profile:
             raise ValueError(f"Sem perfil Krauss para '{topology}' em {KRAUSS_CALIBRATION_PATH}; rode calibrate_stage1.py")
+        los_levels = los_sweep.get(topology, {}).get("levels")
+        if not los_levels:
+            raise ValueError(f"Sem níveis de LOS para '{topology}' em {LOS_SWEEP_PATH}; rode src/map_los.py")
         krauss = profile["params"]
         net_path = OSM_DIR / f"{file_topology(topology)}.net.xml"
         if not net_path.is_file():
@@ -259,34 +275,23 @@ def generate_sumo_files():
         lanes = sum(route["lanes_per_direction"] for route in topology_routes.values())
         levels = topologies.setdefault(file_topology(topology), {})
 
-        for level in profile["levels"]:
-            route_flows = {}
-            for name in topology_routes:
-                by_level = calibrated[name]["flow_veh_h_by_level"]
-                if level not in by_level:
-                    raise ValueError(f"Rota {name} não tem fluxo para {level} em {ROUTE_FLOWS_PATH}")
-                route_flows[name] = round(by_level[level])
-            levels[level] = {"kind": "observed", "year": level_year(level),
-                             **write_level(topology, level, topology_routes, krauss, route_flows, net_path, lanes)}
-
-        # Sintéticos: fator × fluxo médio de cada rota nos níveis observados do ano de referência.
-        reference = [level for level in profile["levels"] if level_year(level) == synthetic["reference_year"]]
+        reference = [level for level in profile["levels"] if level_year(level) == reference_year]
         if not reference:
-            raise ValueError(f"'{topology}' não tem nível observado em {synthetic['reference_year']} "
-                             "(cet.synthetic.reference_year)")
-        for factor in synthetic["factors"]:
+            raise ValueError(f"'{topology}' não tem nível observado em {reference_year} (cet.synthetic.reference_year)")
+        for los, factor in los_levels.items():
             level = synthetic_level_id(factor)
             route_flows = {
                 name: max(1, round(factor * sum(calibrated[name]["flow_veh_h_by_level"][ref] for ref in reference)
                                    / len(reference)))
                 for name in topology_routes
             }
-            levels[level] = {"kind": "synthetic", "factor": factor, "reference_year": synthetic["reference_year"],
+            levels[level] = {"kind": "synthetic", "factor": factor, "reference_year": reference_year, "los": los,
                              **write_level(topology, level, topology_routes, krauss, route_flows, net_path, lanes)}
 
     all_levels = sorted({level for levels in topologies.values() for level in levels}, key=level_sort_key)
     flow_levels = {
-        "source": "Volumes CET MSVP por faixa horária (equivalente-carro, cet.pce) e níveis sintéticos",
+        "source": "Um nível de demanda por LOS do HCM (conf/los_sweep.json): fator × fluxo médio CET "
+                  f"{reference_year} (equivalente-carro, cet.pce); 1,00× = pico CET",
         "levels": all_levels,
         "labels": {level: level_label(level) for level in all_levels},
         "topologies": topologies,

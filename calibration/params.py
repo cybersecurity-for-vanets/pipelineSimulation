@@ -59,11 +59,6 @@ def validate_calibration_params(params):
             raise CalibrationParamsError(f"cet.calibration.hours_by_topology.{topology} deve estar contido em cet.hours")
     if _field(params, "cet.synthetic.reference_year") not in years:
         raise CalibrationParamsError("cet.synthetic.reference_year deve estar em cet.years")
-    factors = _field(params, "cet.synthetic.factors")
-    if not _is_list(factors) or len(set(factors)) != len(factors) \
-            or not all(_is_number(factor) and 0 < factor <= 9.99 for factor in factors) \
-            or len({round(factor * 100) for factor in factors}) != len(factors):
-        raise CalibrationParamsError("cet.synthetic.factors deve ser lista de fatores positivos distintos (precisão 0,01)")
 
     _check_number(_field(params, "network.map_margin_km"), "network.map_margin_km", minimum_exclusive=0)
     ratio = _field(params, "network.max_length_ratio_error")
@@ -133,6 +128,22 @@ def validate_calibration_params(params):
 
     _check_integer(_field(params, "execution.max_workers"), "execution.max_workers", minimum=1)
 
+    factors = _field(params, "los.factors")
+    if not _is_list(factors) or not factors or factors != sorted(set(factors)) \
+            or not all(_is_number(factor) and factor > 0 for factor in factors):
+        raise CalibrationParamsError("los.factors deve ser lista crescente de fatores positivos, sem repetição")
+    _seeds(params, "los.seeds", 1)
+    _check_number(_field(params, "los.saturated_factor"), "los.saturated_factor", minimum_exclusive=1)
+    # Limites HCM de A/B, B/C, C/D, D/E e E/F: crescentes para densidade e atraso, decrescentes para a razão de velocidade.
+    for name, increasing in (("highway_density_pc_km_ln", True), ("urban_road_speed_ratio", False),
+                             ("intersection_delay_s", True)):
+        limits = _field(params, f"los.{name}")
+        ordered = sorted(limits, reverse=not increasing) if _is_list(limits) else None
+        if not _is_list(limits) or len(limits) != 5 or not all(_is_number(x) and x > 0 for x in limits) \
+                or limits != ordered or len(set(limits)) != 5:
+            raise CalibrationParamsError(f"los.{name} deve ter 5 limites positivos (A/B a E/F) em ordem "
+                                         f"{'crescente' if increasing else 'decrescente'}")
+
 
 def _field(params, dotted):
     value = params
@@ -198,7 +209,8 @@ def main():
     print(f"Calibração: {cet['calibration']['year']}, horas {cet['calibration']['hours']} "
           f"(por topologia: {cet['calibration'].get('hours_by_topology', {})}); "
           "validação: todas as demais horas e anos observados")
-    print(f"Níveis sintéticos: {cet['synthetic']['factors']} × fluxo médio de {cet['synthetic']['reference_year']}")
+    print(f"Níveis do experimento: um por LOS (map_los.py, fatores {params['los']['factors']}) × fluxo médio de "
+          f"{cet['synthetic']['reference_year']}")
     print(f"Krauss: {len(params['krauss']['bounds'])} parâmetros livres de {len(KRAUSS_KEYS)}")
 
 

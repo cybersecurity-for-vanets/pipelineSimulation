@@ -2,7 +2,7 @@
 
 Pipeline para avaliar o impacto da cifração com preservação de formato **FF1** (NIST SP 800-38G) em mensagens V2X (CAM) sobre cenários de tráfego reais calibrados só com os dados da CET-SP (relatório MSVP 2019 de volumes e velocidades).
 
-A matriz experimental é **3 topologias** (`highway`, `urbanRoad`, `intersection`) × **níveis de fluxo** × **4 protocolos**, com 10 repetições (sementes) por configuração. Os níveis observados são os volumes CET de cada ano e hora pesquisados (`y2019h07` = 2019, 07h–08h; anos 2016–2019, horas 7–9h e 17–19h). Os níveis sintéticos (`s025`, `s050`, `s075`, `s125`) são múltiplos do fluxo médio de 2019 e cobrem volumes que a CET não pesquisou. São 22 níveis na highway, 22 na urban_road e 10 na intersection: 54 cenários, 216 configurações e 2.160 simulações.
+A matriz experimental é **3 topologias** (`highway`, `urbanRoad`, `intersection`) × **níveis de fluxo** × **4 protocolos**, com 10 repetições (sementes) por configuração. Os volumes CET de cada ano e hora (2016–2019, 7–9h e 17–19h) servem à calibração e à validação do modelo de tráfego. No experimento, cada nível é um nível de serviço (LOS) do HCM alcançado pela topologia: um múltiplo do fluxo médio de 2019 (`s045` = 0,45×; `s100` = pico CET), escolhido por `src/map_los.py`. São 6 níveis na highway (A–F), 4 na urban_road (C–F) e 4 na intersection (A, B, C e F): 14 cenários, 56 configurações e 560 simulações.
 
 | Topologia | Trecho CET | Demanda |
 | --- | --- | --- |
@@ -82,7 +82,8 @@ Volume e velocidade vêm dos relatórios MSVP 2016–2019 (`conf/cet_volumes.csv
 
 ### Etapa 1.3 — `generate_routes.py`: rotas SUMO
 
-- Para cada topologia, gera `trafficXmlFiles/<topologia>_<nível>.rou.xml` e o `.sumocfg` (com os offsets de semáforo, quando existem) de cada nível observado e de cada fator de `cet.synthetic`.
+- Antes, `map_los.py` varre a demanda no modelo calibrado e escolhe um fator por LOS do HCM (`conf/los_sweep.json`).
+- Para cada topologia, gera `trafficXmlFiles/<topologia>_<nível>.rou.xml` e o `.sumocfg` (com os offsets de semáforo, quando existem) de cada nível por LOS.
 - Grava `conf/flow_levels.json`: a lista de níveis, os rótulos (`07h–08h`) e o fluxo total e por faixa de cada topologia e nível. Esse arquivo é o contrato com as Etapas 2–4 e os gráficos (ver `src/flow_levels.py`).
 
 ### Etapa 2.0 — `benchmark_crypto.py`: tempos do FF1

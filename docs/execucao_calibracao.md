@@ -10,6 +10,7 @@ O Python precisa ter `requests` e `optuna`. Nesta máquina, o `.venv` do OMNeT++
 |---|---|---|---|---|---|---|
 | 1 | Redes, rotas e reparos | `python src/fetch_data.py` | `conf/routes.json` | `osmFiles/<topologia>.osm`/`.net.xml` (reparada), `conf/cet_scenarios.json` (rotas e alças) | minutos (download do OSM) | 2026-11-06 com `--skip-download` (OSM de 2026-10-31; `network.join_nodes` na intersection; highway e urban_road sem mudança de faixas, conexões ou fases) |
 | 2 | Calibração | `python src/calibrate_stage1.py` | `conf/cet_scenarios.json`, `conf/cet_*.csv` | `osmFiles/<topologia>.tls_offsets.add.xml`, `conf/route_flows_calibrated.json`, `conf/krauss_calibration.json` | `--smoke`: 8–15 min; rodada completa 3–6 h (2026-11-05: ~4 h com 3 níveis de calibração; com 6 níveis, estimar o dobro) | 2026-11-06: rodada completa com calibração em 2019 inteiro; intersection recalibrada após `network.join_nodes`. highway aprovada (22,6%); urban_road (57,9%) e intersection (72,4%) reprovadas, aceitas como limitação |
+| 2b | Nível de serviço (HCM) | `python src/map_los.py` | saídas dos passos 1 e 2 | `conf/los_sweep.json` (varredura e um fator por LOS) | ~1 h (126 simulações); `--factors` para a varredura fina | 2026-11-06, com varredura fina na intersection e na urban_road |
 | 3 | Rotas por hora | `python src/generate_routes.py` | saídas dos passos 1 e 2 | `trafficXmlFiles/<topologia>_h<HH>.rou.xml`/`.sumocfg`, `conf/flow_levels.json` | segundos | 2026-11-06, sobre a rodada completa |
 
 Depois vêm as Etapas 2.0 (`benchmark_crypto.py`), 2 (`generate_stage2_configs.py`), 3 e 4, como no `README.md`.
@@ -18,7 +19,8 @@ Depois vêm as Etapas 2.0 (`benchmark_crypto.py`), 2 (`generate_stage2_configs.p
 
 - **1 (`fetch_data.py`)**: depois de mudar `conf/routes.json` ou `network.*`. Baixar o OSM de novo pode mudar a rede e invalidar os offsets e a calibração. `--skip-download` reaproveita os `.osm`; `--skip-netconvert` refaz o mapeamento das rotas sobre a rede atual. Os reparos da rede (`network_repair.py`) rodam sempre e são idempotentes. Para mudar `network.min_main_green_share` ou `network.min_other_green_s`, rode sem `--skip-netconvert`: a rede já reparada não volta ao plano original.
 - **2 (`calibrate_stage1.py`)**: depois do passo 1 ou de mudar `cet.*`, `flow.*`, `simulation.*`, `krauss.*` ou os CSVs da CET. `--topology` limita a topologias; as demais ficam como estão nos JSONs.
-- **3 (`generate_routes.py`)**: depois do passo 2 ou de mudar `cet.synthetic`.
+- **2b (`map_los.py`)**: depois do passo 2 ou de mudar `los.*`. `--factors` refina fronteiras sem refazer a varredura.
+- **3 (`generate_routes.py`)**: depois do passo 2b (usa os níveis por LOS de `conf/los_sweep.json`).
 
 ## Opções úteis
 
@@ -56,6 +58,6 @@ Próximas etapas:
 PY=~/bin/.venv/env/bin/python
 $PY src/generate_routes.py
 $PY src/generate_stage2_configs.py
-$PY src/orchestrate_stage3.py        # 2.160 simulações OMNeT++ (todos os protocolos)
+$PY src/orchestrate_stage3.py        # 560 simulações OMNeT++ (14 níveis por LOS × 4 protocolos × 10 seeds)
 $PY src/analyze_stage4_results.py
 ```

@@ -1,4 +1,4 @@
-"""Níveis de fluxo do experimento: volumes CET observados (ano e hora) e níveis sintéticos.
+"""Níveis de fluxo: volumes CET observados (ano e hora, usados na calibração) e níveis de demanda do experimento.
 
 Contrato entre as etapas:
 - generate_routes.py grava conf/flow_levels.json depois de gerar as rotas de cada nível;
@@ -8,7 +8,8 @@ Contrato entre as etapas:
 Ids de nível:
 - observado: "y" + ano + "h" + hora de início com dois dígitos (y2019h07 = volume CET de 2019, 07:00–08:00);
 - sintético: "s" + fator × 100 com três dígitos (s050 = 0,50 × fluxo médio observado no ano de referência).
-  Não tem observação: serve para cobrir faixas de volume que a CET (só horários de pico) não cobre.
+  Desde 2026-11-06 o experimento V2V usa só níveis sintéticos, um por nível de serviço (LOS) do HCM alcançado na
+  topologia (map_los.py); s100 é o pico CET (média das horas observadas). Cada entrada tem "los".
 
 veh_h_per_lane = fluxo total da topologia no nível ÷ soma das faixas típicas (mediana, lanes_per_direction) das rotas.
 Cada topologia tem a sua lista de níveis: nem todo ano da CET pesquisou todas as vias.
@@ -20,7 +21,7 @@ Formato de conf/flow_levels.json:
   "topologies": {
     "<topologia do arquivo, ex. urbanRoad>": {
       "y2019h07": {"kind": "observed", "total_veh_h": ..., "veh_h_per_lane": ..., "routes": {"<rota>": veh/h}},
-      "s050": {"kind": "synthetic", "factor": 0.5, "reference_year": 2019, ...}
+      "s050": {"kind": "synthetic", "factor": 0.5, "reference_year": 2019, "los": "C", ...}
     }
   }
 }
@@ -83,7 +84,14 @@ def level_label(level):
     info = parse_level(level)
     if info["kind"] == "observed":
         return f"{info['hour']:02d}h–{info['hour'] + 1:02d}h/{info['year']}"
-    return f"{info['factor']:.2f}× (sintético)".replace(".", ",")
+    if info["factor"] == 1.0:
+        return "1,00× (pico CET)"
+    return f"{info['factor']:.2f}×".replace(".", ",")
+
+
+def level_los(topology, level, path=FLOW_LEVELS_PATH):
+    """LOS do HCM do nível na topologia (nome de arquivo, ex. urbanRoad); None para níveis sem LOS."""
+    return load_flow_levels(path)["topologies"][topology][level].get("los")
 
 
 def split_level(name):
