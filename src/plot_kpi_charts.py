@@ -10,14 +10,14 @@ try:
         equivalence_tests, load_margins, paired_differences, summarize_differences,
     )
     from .flow_levels import flow_per_lane, split_level, is_current_config
-    from .level_style import add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key
+    from .level_style import add_level_columns, annotate_los, level_origin_handles, plot_level_series, safe_level_sort_key
     from .protocols import load_protocols
 except ImportError:
     from kpi_statistics import (
         equivalence_tests, load_margins, paired_differences, summarize_differences,
     )
     from flow_levels import flow_per_lane, split_level, is_current_config
-    from level_style import add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key
+    from level_style import add_level_columns, annotate_los, level_origin_handles, plot_level_series, safe_level_sort_key
     from protocols import load_protocols
 
 
@@ -308,7 +308,8 @@ def chart_filename(prefix, metric):
 def plot_lines(summary):
     """Uma linha por protocolo sobre o volume de cada nível (veh/h/faixa) na topologia do painel.
 
-    Os pontos são ligados em ordem de volume; nível sintético = marcador vazado e segmento esmaecido.
+    Os pontos são ligados em ordem de volume; demanda extrapolada = marcador vazado e segmento esmaecido; a letra do
+    LOS do HCM de cada nível fica no topo do painel.
     """
     metrics = summary["KPI"].unique()
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -327,7 +328,9 @@ def plot_lines(summary):
                 plot_level_series(ax, values["x"], values["Mean"], values["Scenario"], color=color,
                                   yerr=values["CI95"], markersize=4)
                 legend_handles.setdefault(protocol, Line2D([], [], color=color, marker="o", label=protocol))
-            ax.set_title(topology)
+            levels = data["Scenario"].drop_duplicates()
+            annotate_los(ax, topology, [scenario_flow_per_lane(topology, flow) for flow in levels], levels)
+            ax.set_title(topology, pad=14)
             ax.set_xlabel("Volume por faixa (veh/h/faixa)")
             ax.set_ylabel(metric)
             ax.grid(alpha=0.3)

@@ -14,16 +14,16 @@ RAW_DATA_DIR = os.path.join(RESULTS_DIR, "rawData")
 
 sys.path.insert(0, os.path.join(PROJECT_DIR, "src"))
 from flow_levels import level_label  # noqa: E402
-from level_style import (level_origin_handles, plot_level_series, scatter_levels, sort_levels,  # noqa: E402,F401
-                         synthetic_mask)
+from level_style import (annotate_los, extrapolated_mask, is_extrapolated, level_origin_handles,  # noqa: E402,F401
+                         los_of, plot_level_series, scatter_levels, sort_levels)
 from protocols import load_protocols  # noqa: E402
 
 TOPOLOGIES = ["highway", "urbanRoad", "intersection"]
 PROTOCOLS = list(load_protocols())
 
-# Níveis de fluxo (ver src/flow_levels.py): observados CET por ano e hora (y2019h07) e sintéticos (s050). Cada
-# topologia tem a sua lista. O eixo de fluxo é o volume numérico por faixa; o rótulo de um nível
-# ("07h–08h/2019", "0,50× (sintético)") vem de level_label(). Observado × sintético: src/level_style.py.
+# Níveis de fluxo (ver src/flow_levels.py): um por LOS do HCM em cada topologia (s045 = 0,45× do pico CET; s100 =
+# pico CET). O eixo de fluxo é o volume numérico por faixa; o rótulo vem de level_label() e o LOS de los_of().
+# Demanda CET × extrapolada: src/level_style.py.
 FLOW_X = "Flow per lane (veh/h/lane)"
 FLOW_AXIS_LABEL = "Volume por faixa (veh/h/faixa)"
 

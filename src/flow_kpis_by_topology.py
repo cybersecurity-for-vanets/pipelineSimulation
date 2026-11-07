@@ -7,12 +7,12 @@ import pandas as pd
 try:
     from .flow_levels import load_flow_levels, split_level, is_current_config
     from .generate_stage2_configs import MEASUREMENT_S
-    from .level_style import add_level_columns, level_origin_handles, scatter_levels, sort_levels
+    from .level_style import add_level_columns, annotate_los, level_origin_handles, scatter_levels, sort_levels
     from .protocols import load_protocols
 except ImportError:
     from flow_levels import load_flow_levels, split_level, is_current_config
     from generate_stage2_configs import MEASUREMENT_S
-    from level_style import add_level_columns, level_origin_handles, scatter_levels, sort_levels
+    from level_style import add_level_columns, annotate_los, level_origin_handles, scatter_levels, sort_levels
     from protocols import load_protocols
 
 # ==============================================================================
@@ -211,7 +211,7 @@ def summarize(run_kpis):
 def plot_seed_scatter(run_kpis):
     """Um gráfico por topologia: x = volume do nível (veh/h/faixa), cada ponto é uma semente; preto = média.
 
-    Nível sintético = marcador vazado.
+    Demanda extrapolada (fora do pico CET) = marcador vazado; letra do LOS do HCM no topo de cada painel.
     """
     os.makedirs(PLOTS_DIR, exist_ok=True)
     colors = plt.get_cmap("tab10")
@@ -242,8 +242,10 @@ def plot_seed_scatter(run_kpis):
                 axis.scatter(means.index + shift, means.values, marker="_", s=400, linewidths=2, color="black",
                              zorder=3)
 
+            levels = data[["Scenario", FLOW_X]].drop_duplicates("Scenario")
+            annotate_los(axis, topology, levels[FLOW_X], levels["Scenario"].astype(str))
             axis.set_xlabel("Volume por faixa (veh/h/faixa)")
-            axis.set_title(metric)
+            axis.set_title(metric, pad=14)
             axis.grid(True, linestyle=":", alpha=0.6)
 
         handles = protocol_handles + level_origin_handles(with_line=False)

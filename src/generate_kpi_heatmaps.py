@@ -9,14 +9,16 @@ try:
         CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
         PAIRED_SUMMARY_CSV, SUMMARY_CSV, scenario_flow_per_lane,
     )
-    from .level_style import synthetic_mask
+    from .flow_levels import level_label
+    from .level_style import is_extrapolated, los_of
     from .protocols import load_protocols
 except ImportError:
     from plot_kpi_charts import (
         CPU_KPI, DEADLINE_KPI, LATENCY_KPI, PDR_KPI, PROCESSING_KPI, PROCESSING_P99_KPI,
         PAIRED_SUMMARY_CSV, SUMMARY_CSV, scenario_flow_per_lane,
     )
-    from level_style import synthetic_mask
+    from flow_levels import level_label
+    from level_style import is_extrapolated, los_of
     from protocols import load_protocols
 
 
@@ -60,13 +62,9 @@ def draw_heatmap(ax, values, title, row_labels, protocols, cmap, symmetric=False
         ax.figure.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
 
 
-# Faixas de volume por topologia: os níveis (observados e sintéticos) da topologia, ordenados por veh/h/faixa,
-# divididos em tercis. Uma linha por (topologia, nível) daria ~28 linhas por topologia e um heatmap ilegível;
-# cada célula é a média do KPI entre os níveis da faixa. Os valores por nível ficam nos gráficos de linha
-# (plot_kpi_charts.py) e em kpi_run_summary.csv / paired_summary.csv.
-FLOW_BANDS = ["volume baixo", "volume médio", "volume alto"]
-
-
+# Uma linha por (topologia, nível): com um nível por LOS do HCM (4–6 por topologia, ver map_los.py), cada linha é
+# um regime de tráfego. O rótulo traz o LOS, o volume e se a demanda é a do pico CET ou extrapolada. Níveis sem LOS
+# (resultados de rodadas antigas) usam o rótulo do nível.
 def level_bands(frames):
     """{(topologia, nível): rótulo da linha} e a ordem das linhas, a partir dos níveis presentes nos dados."""
     pairs = pd.concat([frame[["Topology", "Scenario"]] for frame in frames]).drop_duplicates()
@@ -76,17 +74,13 @@ def level_bands(frames):
     band_of, row_labels = {}, []
     for topology in TOPOLOGY_ORDER:
         levels = pairs[pairs["Topology"] == topology].sort_values("x")
-        if levels.empty:
-            continue
-        for band, positions in zip(FLOW_BANDS, np.array_split(np.arange(len(levels)), len(FLOW_BANDS))):
-            chunk = levels.iloc[positions]
-            if chunk.empty:
-                continue
-            synthetic = int(synthetic_mask(chunk["Scenario"]).sum())
-            label = (f"{topology} / {band}\n{chunk['x'].min():.0f}–{chunk['x'].max():.0f} veh/h/faixa "
-                     f"({len(chunk) - synthetic} obs. + {synthetic} sint.)")
+        for level, per_lane in zip(levels["Scenario"], levels["x"]):
+            los = los_of(topology, level)
+            name = f"LOS {los}" if los else level_label(level)
+            origin = "extrapolada" if is_extrapolated(level) else "pico CET"
+            label = f"{topology} / {name}\n{per_lane:.0f} veh/h/faixa ({origin})"
             row_labels.append(label)
-            band_of.update({(topology, level): label for level in chunk["Scenario"]})
+            band_of[(topology, level)] = label
     return band_of, row_labels
 
 

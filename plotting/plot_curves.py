@@ -8,9 +8,9 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import NullFormatter, ScalarFormatter
 
 from plot_common import (COLORS, FLOW_X, METRIC_AXIS_LABELS, METRIC_FILE_NAMES, METRIC_TITLES,
-                         PROTOCOLS, RAW_DATA_DIR, RESULTS_DIR, TOPOLOGIES, level_origin_handles,
-                         plot_level_series, protocol_marker, save, scatter_levels, synthetic_mask)
-from level_style import SYNTHETIC_FACE, SYNTHETIC_LINE_ALPHA
+                         PROTOCOLS, RAW_DATA_DIR, RESULTS_DIR, TOPOLOGIES, is_extrapolated, level_origin_handles,
+                         los_of, plot_level_series, protocol_marker, save, scatter_levels)
+from level_style import EXTRAPOLATED_FACE, EXTRAPOLATED_LINE_ALPHA
 
 # ==============================================================================
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
@@ -27,9 +27,11 @@ CBR_METRICS = ["PDR (%)", "Latency E2E (ms)"]
 
 # Protocolo: estilo da linha de tendência (o marcador já identifica os pontos).
 PROTOCOL_LINESTYLES = ["-", "--", ":", "-.", (0, (5, 1)), (0, (3, 1, 1, 1))]
-# Curvas por distância: com ~28 níveis por topologia, só três níveis representativos (menor, mediano e maior
-# veh/h/faixa da topologia) são desenhados; o estilo da linha identifica qual deles.
-REPRESENTATIVE_LEVELS = [("menor volume", ":"), ("volume mediano", "--"), ("maior volume", "-")]
+# Curvas por distância: até quatro níveis por topologia, escolhidos pelo papel no regime de tráfego (ver
+# representative_levels); o estilo da linha identifica o papel e o título do painel diz o LOS de cada um.
+REPRESENTATIVE_LEVELS = [("LOS mais leve", ":"), ("LOS intermediário", "-."), ("pico CET", "--"),
+                         ("acima do pico", "-")]
+PEAK_LEVEL = "s100"
 CBR_BINS = 12           # faixas de CBR da curva média (todas as topologias juntas)
 MIN_POINTS_PER_BIN = 3  # faixas com menos execuções ficam de fora da curva
 DISTANCE_BIN_M = 50     # largura das faixas de distância (LatencyTraCIDemo11p.h)
@@ -71,7 +73,7 @@ def binned_mean(x, y, bins):
 
 
 def draw_points(axis, data, x_column, metric):
-    """Um ponto por execução: cor = topologia, marcador = protocolo; vazado = nível sintético."""
+    """Um ponto por execução: cor = topologia, marcador = protocolo; vazado = demanda extrapolada (fora do pico CET)."""
     for topology in present(data["Topology"], TOPOLOGIES):
         for protocol in present(data["Protocol"], PROTOCOLS):
             group = data[(data["Topology"] == topology) & (data["Protocol"] == protocol)]
@@ -118,7 +120,7 @@ def draw_cbr(axis, data, metric):
 
 def draw_flow_per_lane(axis, data, metric):
     """G: média e IC 95% de cada nível × veh/h/faixa; uma linha por topologia e protocolo, ligando os níveis em ordem
-    de volume. Nível sintético: marcador vazado e segmento esmaecido."""
+    de volume. Demanda extrapolada: marcador vazado e segmento esmaecido."""
     for topology in present(data["Topology"], TOPOLOGIES):
         for protocol in present(data["Protocol"], PROTOCOLS):
             group = data[(data["Topology"] == topology) & (data["Protocol"] == protocol)]
@@ -139,25 +141,39 @@ def draw_flow_per_lane(axis, data, metric):
 
 
 def representative_levels(data, topology):
-    """Menor, mediano e maior veh/h/faixa entre os níveis da topologia: [(nível, veh/h/faixa), ...]."""
+    """{papel: (nível, veh/h/faixa)} para os papéis de REPRESENTATIVE_LEVELS presentes na topologia.
+
+    LOS mais leve = menor volume; pico CET = s100; acima do pico = maior volume, se passar do pico; LOS intermediário =
+    o nível do meio entre os que sobram abaixo do pico. Sem s100 (rodadas antigas), o pico é o maior volume.
+    """
     flows = (data[data["Topology"] == topology][["Scenario", FLOW_X]].drop_duplicates("Scenario")
              .dropna(subset=[FLOW_X]).sort_values(FLOW_X))
     if flows.empty:
-        return []
-    picks = [0, (len(flows) - 1) // 2, len(flows) - 1]
-    return [(flows["Scenario"].iloc[index], flows[FLOW_X].iloc[index]) for index in picks]
+        return {}
+    rows = list(zip(flows["Scenario"], flows[FLOW_X]))
+    peak = next((row for row in rows if row[0] == PEAK_LEVEL), rows[-1])
+    picks = {"LOS mais leve": rows[0], "pico CET": peak}
+    if rows[-1][1] > peak[1]:
+        picks["acima do pico"] = rows[-1]
+    middle = [row for row in rows if row[1] < peak[1] and row != rows[0]]
+    if middle:
+        picks["LOS intermediário"] = middle[(len(middle) - 1) // 2]
+    return {role: picks[role] for role, _ in REPRESENTATIVE_LEVELS if role in picks}
 
 
 def draw_distance(axis, data, topology):
-    """F: PDR × distância de uma topologia nos níveis representativos; estilo da linha = nível (menor, mediano,
-    maior volume), marcador = protocolo, barras = IC 95%; nível sintético vazado e esmaecido."""
+    """F: PDR × distância de uma topologia nos níveis representativos; estilo da linha = papel do nível (LOS mais
+    leve, intermediário, pico CET, acima do pico), marcador = protocolo, barras = IC 95%; demanda extrapolada vazada
+    e esmaecida."""
     data = data[data["Topology"] == topology]
     protocols = present(data["Protocol"], PROTOCOLS)
     bins = sorted(data["Distance bin"].unique())
     spread = DISTANCE_BIN_M * 0.06
     picks = representative_levels(data, topology)
-    for (flow, _), (_, linestyle) in zip(picks, REPRESENTATIVE_LEVELS):
-        synthetic = bool(synthetic_mask([flow])[0])
+    linestyles = dict(REPRESENTATIVE_LEVELS)
+    for role, (flow, _) in picks.items():
+        linestyle = linestyles[role]
+        extrapolated = is_extrapolated(flow)
         for offset, protocol in enumerate(protocols):
             group = data[(data["Scenario"] == flow) & (data["Protocol"] == protocol)].sort_values("Distance bin")
             if group.empty:
@@ -165,10 +181,10 @@ def draw_distance(axis, data, topology):
             x = group["Distance min (m)"] + DISTANCE_BIN_M / 2 + (offset - (len(protocols) - 1) / 2) * spread
             axis.errorbar(x, group["PDR (%)"], yerr=group["PDR (%) CI95"], color=COLORS[topology],
                           linestyle=linestyle, marker=protocol_marker(protocol), markersize=5, linewidth=1.6,
-                          capsize=2, alpha=SYNTHETIC_LINE_ALPHA if synthetic else 1.0)
-            if synthetic:
+                          capsize=2, alpha=EXTRAPOLATED_LINE_ALPHA if extrapolated else 1.0)
+            if extrapolated:
                 axis.plot(x, group["PDR (%)"], linestyle="", marker=protocol_marker(protocol), markersize=5,
-                          color=COLORS[topology], markerfacecolor=SYNTHETIC_FACE, markeredgewidth=1.3)
+                          color=COLORS[topology], markerfacecolor=EXTRAPOLATED_FACE, markeredgewidth=1.3)
 
     centers = [index * DISTANCE_BIN_M + DISTANCE_BIN_M / 2 for index in bins]
     labels = [f"{index * DISTANCE_BIN_M}–{(index + 1) * DISTANCE_BIN_M}" for index in bins]
@@ -176,10 +192,8 @@ def draw_distance(axis, data, topology):
         labels[-1] = f"≥ {bins[-1] * DISTANCE_BIN_M}"
     axis.set_xticks(centers)
     axis.set_xticklabels(labels)
-    # Título: topologia e, na segunda linha, quais níveis são o menor, o mediano e o maior volume.
-    # Só o volume, marcado "sint." quando o nível é sintético.
-    described = " · ".join(f"{short} {per_lane:.0f}" + (" (sint.)" if synthetic_mask([flow])[0] else "")
-                           for (flow, per_lane), short in zip(picks, ["menor", "mediano", "maior"]))
+    # Título: topologia e, na segunda linha, o LOS e o volume de cada nível desenhado, na ordem dos papéis.
+    described = " · ".join(f"{los_of(topology, flow) or flow} {per_lane:.0f}" for flow, per_lane in picks.values())
     axis.set_title(f"{topology}\n{described} veh/h/faixa", fontsize=9)
     axis.set_xlabel("Distância emissor–receptor (m)")
     axis.set_ylabel(METRIC_AXIS_LABELS["PDR (%)"])
@@ -187,7 +201,7 @@ def draw_distance(axis, data, topology):
 
 
 def add_legends(figure, upper_left, upper_right, statistic):
-    """Duas legendas lado a lado; abaixo delas, a origem do nível (observado/sintético) e, por último, a que
+    """Duas legendas lado a lado; abaixo delas, a origem da demanda (pico CET/extrapolada) e, por último, a que
     explica a marca estatística (statistic[0]). Todas abaixo dos painéis."""
     title_left, handles_left = upper_left
     title_right, handles_right = upper_right
@@ -265,7 +279,7 @@ def plot_distance(data, modo):
     topologies = present(data["Topology"], TOPOLOGIES)
     flow_handles = [Line2D([], [], color="#404040", linestyle=linestyle, linewidth=1.8, label=name)
                     for name, linestyle in REPRESENTATIVE_LEVELS]
-    legends = (("Nível (por veh/h/faixa da topologia)", flow_handles), ("Protocolo", protocol_handles(data, False)))
+    legends = (("Nível (papel no regime de tráfego)", flow_handles), ("Protocolo", protocol_handles(data, False)))
     statistic = [Line2D([], [], color="gray", marker="|", markersize=10, linestyle="",
                         label="Barra vertical = IC 95% entre sementes; cor = topologia")]
     statistic += level_origin_handles()

@@ -25,7 +25,7 @@ METRICS = ["PDR (%)", "CBR (%)", "Latency E2E (ms)"]
 def draw_metric(axis, data, metric):
     """Pontos por semente sobre o volume do nível (veh/h/faixa): cor = topologia, marcador = protocolo.
 
-    Marcador vazado = nível sintético. Marca preta = média de cada grupo (topologia, protocolo, nível).
+    Marcador vazado = demanda extrapolada (fora do pico CET). Marca preta = média de cada grupo (topologia, protocolo, nível).
     """
     topologies = [t for t in TOPOLOGIES if t in set(data["Topology"])]
     for topology in topologies:

@@ -8,11 +8,13 @@ import matplotlib.pyplot as plt
 
 try:
     from .flow_levels import current_result_files, flow_per_lane, is_current_config, level_label, level_los, split_level
-    from .level_style import (add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key)
+    from .level_style import (add_level_columns, annotate_los, level_origin_handles, plot_level_series,
+                              safe_level_sort_key)
     from .protocols import load_protocols
 except ImportError:
     from flow_levels import current_result_files, flow_per_lane, is_current_config, level_label, level_los, split_level
-    from level_style import (add_level_columns, level_origin_handles, plot_level_series, safe_level_sort_key)
+    from level_style import (add_level_columns, annotate_los, level_origin_handles, plot_level_series,
+                             safe_level_sort_key)
     from protocols import load_protocols
 
 # ==============================================================================
@@ -204,8 +206,8 @@ def present_topologies(values):
 def generate_plots(summary):
     """Uma figura por métrica: um painel por topologia, x = veh/h/faixa do nível, uma linha por protocolo.
 
-    Substitui as barras com uma categoria por nível (ilegíveis com ~28 níveis). Nível sintético = marcador vazado
-    e segmento esmaecido.
+    Demanda extrapolada (fora do pico CET) = marcador vazado e segmento esmaecido; a letra do LOS do HCM de cada
+    nível fica no topo do painel.
     """
     print("[3/4] Gerando gráficos para a dissertação...")
 
@@ -240,7 +242,8 @@ def generate_plots(summary):
                 plot_level_series(ax, group[FLOW_X], group['Mean'], group['Scenario'], color=color,
                                   yerr=group['CI_95'], markersize=4)
                 handles.setdefault(protocol, plt.Line2D([], [], color=color, marker="o", label=protocol))
-            ax.set_title(topology)
+            annotate_los(ax, topology, cell[FLOW_X], cell['Scenario'])
+            ax.set_title(topology, pad=14)
             ax.set_xlabel("Volume por faixa (veh/h/faixa)")
             ax.grid(linestyle='--', alpha=0.5)
         axes[0][0].set_ylabel("Valor médio (barra = IC 95%)")

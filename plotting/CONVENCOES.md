@@ -54,14 +54,15 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 | Topologia | **cor** | `highway` `#1f77b4`, `urbanRoad` `#ff7f0e`, `intersection` `#2ca02c` |
 | Protocolo | **marcador** | `o`, `s`, `^`, `D`, `v`, `P`, na ordem de `load_protocols()` |
 | Média do grupo | traço preto `_` | `s=400`, `linewidths=2`, `zorder=3` |
-| Origem do nível | **preenchimento** do marcador e opacidade da linha | observado (CET): marcador cheio, linha opaca; sintético: marcador vazado (branco por dentro) e segmento esmaecido (`SYNTHETIC_LINE_ALPHA`) quando uma das pontas é sintética |
-| Nível (quando não está no eixo X, ex. PDR × distância) | **estilo da linha** | só três níveis representativos por topologia: menor (`:`), mediano (`--`) e maior (`-`) veh/h/faixa; o título do painel diz o volume de cada um |
+| Origem da demanda | **preenchimento** do marcador e opacidade da linha | demanda CET (pico `s100` ou nível observado `y<ano>h<hora>`): marcador cheio, linha opaca; demanda extrapolada (demais níveis por LOS): marcador vazado (branco por dentro) e segmento esmaecido (`EXTRAPOLATED_LINE_ALPHA`) quando uma das pontas é extrapolada |
+| LOS do HCM | letra no topo do painel (`annotate_los()`) | na posição x de cada nível; em negrito no pico CET |
+| Nível (quando não está no eixo X, ex. PDR × distância) | **estilo da linha** | até quatro níveis por topologia, pelo papel: LOS mais leve (`:`), LOS intermediário (`-.`), pico CET (`--`) e acima do pico (`-`); o título do painel diz o LOS e o volume de cada um |
 
-- Em gráficos sobre o fluxo, o eixo X é **numérico**, `Flow per lane (veh/h/lane)`, e não uma categoria por nível (com ~28 níveis, barras ou ticks por nível ficam ilegíveis). Quando topologias diferentes dividem o eixo, use escala log (o highway tem centenas a milhares de veh/h/faixa, as vias urbanas dezenas).
+- Em gráficos sobre o fluxo, o eixo X é **numérico**, `Flow per lane (veh/h/lane)`, e não uma categoria por nível; o LOS de cada nível vai no topo do painel com `annotate_los()`. Quando topologias diferentes dividem o eixo, use escala log (o highway tem centenas a milhares de veh/h/faixa, as vias urbanas dezenas).
 - Linhas que ligam níveis seguem a ordem do volume (x), não a do id.
-- Observado × sintético é obrigatório em todo gráfico que mostre níveis: use `plot_level_series()` (linhas com IC) e `scatter_levels()` (dispersão) de `src/level_style.py`, reexportados por `plot_common.py`, e inclua na legenda `level_origin_handles()` ("observado (CET)" e "sintético").
-- Não há cor nem tom por nível (o antigo `level_shade()` por hora foi retirado). Não crie dicionários de estilo por nível: a lista muda com os anos da CET e os fatores sintéticos.
-- Heatmaps não têm uma linha por (topologia, nível): agrupe os níveis da topologia em faixas de volume (tercis por veh/h/faixa, ver `src/generate_kpi_heatmaps.py`) e diga no rótulo a faixa e quantos níveis observados e sintéticos ela tem.
+- Demanda CET × extrapolada é obrigatório em todo gráfico que mostre níveis: use `plot_level_series()` (linhas com IC) e `scatter_levels()` (dispersão) de `src/level_style.py`, reexportados por `plot_common.py`, e inclua na legenda `level_origin_handles()` ("demanda CET (pico)" e "demanda extrapolada"). Só a demanda CET está na faixa em que o modelo de tráfego foi calibrado e validado.
+- Não há cor nem tom por nível (o antigo `level_shade()` por hora foi retirado). Não crie dicionários de estilo por nível: a lista muda quando `map_los.py` é refeito.
+- Heatmaps têm uma linha por (topologia, LOS), em ordem de volume (ver `src/generate_kpi_heatmaps.py`); o rótulo diz o LOS, o veh/h/faixa e se a demanda é o pico CET ou extrapolada.
 
 - Mantenha a mesma cor para a mesma topologia e o mesmo marcador para o mesmo protocolo em todos os gráficos. Se um tipo de gráfico não suportar marcadores (barras, por exemplo), codifique o protocolo com a mesma ordem de posição e deixe a topologia como cor.
 - Essas constantes, as traduções e `save()` ficam em `plot_common.py`. Importe de lá em vez de copiar os dicionários.
@@ -74,8 +75,8 @@ Este documento define as regras que os scripts de gráficos desta pasta seguem. 
 | Tipo | Chave no CSV | Texto exibido |
 | --- | --- | --- |
 | Nível de fluxo observado (rótulo) | `y2019h07`, `y2016h18`, … | `07h–08h/2019`, `18h–19h/2016`, … (`level_label()`) |
-| Nível de fluxo sintético (rótulo) | `s025`, `s125`, … | `0,25× (sintético)`, `1,25× (sintético)`, … (`level_label()`) |
-| Origem do nível (legenda) | `observed` / `synthetic` | observado (CET) / sintético |
+| Nível por LOS (rótulo) | `s045`, `s100`, `s120`, … | `0,45×`, `1,00× (pico CET)`, `1,20×`, … (`level_label()`); LOS com `los_of()` |
+| Origem da demanda (legenda) | pico CET ou observado / demais níveis | demanda CET (pico) / demanda extrapolada |
 | Título do painel | `PDR (%)` / `CBR (%)` / `Latency E2E (ms)` | PDR / CBR / Latência E2E |
 | Título do eixo Y | `PDR (%)` | Taxa de entrega de pacotes (%) |
 | Título do eixo Y | `CBR (%)` | Taxa de ocupação do canal (%) |
