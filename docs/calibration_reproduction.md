@@ -13,7 +13,7 @@ This guide details the sequential execution of Stage 1 traffic modeling, empiric
 | **1.3** | HCM Level of Service Demand Sweep | `python -m src.traffic.map_los` | Outputs of Steps 1.1 and 1.2 | `config/los_sweep.json` | ~45–60 min (126 SUMO runs) |
 | **1.4** | SUMO Route Generation | `python -m src.traffic.generate_routes` | Outputs of Steps 1.1, 1.2, 1.3 | `trafficXmlFiles/*.rou.xml`, `trafficXmlFiles/*.sumocfg`, `config/flow_levels.json` | < 10 seconds |
 
-Subsequent execution proceeds to **Stage 2.0** (`src.crypto.benchmark`), **Stage 2.1** (`src.simulation.generate_configs`), **Stage 3.0** (`src.simulation.orchestrate`), and **Stage 4.0** (`src.analysis.extract_metrics`).
+Subsequent execution proceeds to **Stage 2.0** (`src.crypto.benchmark`), **Stage 2.1** (`src.simulation.generate_configs`), **Stage 3.0** (`src.simulation.orchestrate`), and **Stage 4.0** (`src.analysis.generate_results`).
 
 ---
 

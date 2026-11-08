@@ -27,13 +27,8 @@ python -m src.crypto.benchmark
 python -m src.simulation.generate_configs
 python -m src.simulation.orchestrate --baseline-only
 python -m src.simulation.orchestrate
-python -m src.analysis.extract_metrics
-
-# Post-analysis visualization
-python -m src.analysis.plot_curves
-python -m src.analysis.plot_scatter
-python -m src.analysis.plot_heatmaps
-python -m src.analysis.plot_kpis
+# Stage 4: Statistical Analysis, Publication PNGs & LaTeX Tables
+python -m src.analysis.generate_results
 ```
 
 Build the Veins latency plugin manually:

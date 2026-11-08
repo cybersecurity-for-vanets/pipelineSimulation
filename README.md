@@ -109,11 +109,8 @@ python -m src.simulation.orchestrate                    # Run full matrix (560 r
 python -m src.simulation.orchestrate --baseline-only    # Run baseline only
 python -m src.simulation.orchestrate --protocol FF1_AES # Run specific cipher
 
-# Stage 4: Statistical Analysis & Visualization
-python -m src.analysis.extract_metrics     # Extract scalar metrics via opp_scavetool
-python -m src.analysis.plot_curves         # Generate KPI vs. flow curves
-python -m src.analysis.plot_scatter        # Generate CBR vs. Latency scatter plots
-python -m src.analysis.plot_heatmaps       # Generate matrix heatmaps
+# Stage 4: Statistical Analysis, Publication PNGs & LaTeX Tables
+python -m src.analysis.generate_results    # Unified entry point: Publication PNGs & LaTeX summary tables
 ```
 
 ---

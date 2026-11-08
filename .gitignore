@@ -65,6 +65,7 @@ Thumbs.db
 .pydevproject
 .settings/
 .claude/
+.gemini/
 
 # --- External / Research Papers & Large Datasets ---
 docs/*.pdf

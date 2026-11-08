@@ -104,7 +104,7 @@ def main():
     run_step("Stage 3.0 - Parallel Simulation Orchestration", "src.simulation.orchestrate", stage3_args)
 
     # Stage 4.0: Statistical Analysis & Metric Extraction
-    run_step("Stage 4.0 - Metric Extraction & Analysis", "src.analysis.extract_metrics")
+    run_step("Stage 4.0 - Metric Extraction & Analysis", "src.analysis.generate_results")
 
     print("\n" + "=" * 60)
     print(" PIPELINE COMPLETED SUCCESSFULLY!")
