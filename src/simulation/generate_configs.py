@@ -194,12 +194,17 @@ network = RSUExampleScenario
 *.node[*].veinsmobility.z = 0
 *.node[*].veinsmobility.setHostSpeed = false
 
+# Posicionamento e Antena Veicular (Brummer et al. / Veins empirical monopole)
+*.node[*].nic.phy80211p.antennaOffsetY = 0m
+*.node[*].nic.phy80211p.antennaOffsetZ = 1.895m
+*.rsu[*].nic.phy80211p.antennaOffsetZ = 0m
+
 # Camada MAC IEEE 1609.4 / 802.11p
 **.mac1609_4.useServiceChannel = false
 **.mac1609_4.txPower = 20mW
 **.mac1609_4.bitrate = 6Mbps
 
-# Camada Física IEEE 802.11p
+# Camada Física IEEE 802.11p e Modelos de Propagação (Nakagami-m + SimplePathloss)
 **.phy80211p.analogueModels = xmldoc("config.xml")
 **.phy80211p.decider = xmldoc("config.xml")
 **.phy80211p.sensitivity = -89dBm
@@ -211,9 +216,8 @@ network = RSUExampleScenario
 **.phy80211p.noiseFloor = -98dBm
 **.phy80211p.usePropagationDelay = true
 **.phy80211p.antenna = xmldoc("antenna.xml", "/root/Antenna[@id='monopole']")
-**.phy80211p.antennaPosition = "0 0 0"
-**.phy80211p.collectCollisionStatistics = false
-**.phy80211p.allowDirectAntennaDirection = false
+**.phy80211p.collectCollisionStatistics = true
+**.phy80211p.allowDirectAntennaDirection = true
 """
 
     count = 0
@@ -242,6 +246,7 @@ description = "{top} - {proto_name} - {flow}"
 *.playgroundSizeY = {playground_y}m
 *.rsu[0].mobility.x = {rsu_x:.2f}
 *.rsu[0].mobility.y = {rsu_y:.2f}
+*.rsu[0].mobility.z = 3.0
 *.node[*].appl.cryptoCipher = "{crypto_profile['cipher']}"
 *.node[*].appl.cryptoOverheadBits = {overhead_bits}bit
 *.node[*].appl.cryptoTxDelay = {crypto_profile['tx_delay_us']:.3f}us

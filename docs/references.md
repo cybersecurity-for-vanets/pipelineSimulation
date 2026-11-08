@@ -28,6 +28,14 @@
    - *IEEE Std 1609.2-2016: IEEE Standard for Wireless Access in Vehicular Environments - Security Services for Applications and Management Messages*.
    - *IEEE Std 802.11p-2010: Wireless LAN Medium Access Control (MAC) and Physical Layer (PHY) Specifications: Wireless Access in Vehicular Environments*.
 
+7. **Brummer, A., Sommer, C., et al. (2016).**
+   - *Effects of Antenna Characteristics and Placements on a Vehicle-to-Vehicle Channel Scenario*.
+   - Empirical measurements of directional gain patterns for roof-mounted monopoles in vehicular ad-hoc networks (`SampledAntenna1D`).
+
+8. **Eckhoff, D., & Sommer, C. (2012).**
+   - *A Statistical Process for Realistic Simulation of DSRC/WAVE Multipath Fading*.
+   - Dual-distance Nakagami-m fast fading model for IEEE 802.11p at 5.9 GHz ($m=1.5$ for $d < 80\text{ m}$, $m=0.75$ for $d \ge 80\text{ m}$).
+
 ---
 
 ## 2. Block Cipher Specifications

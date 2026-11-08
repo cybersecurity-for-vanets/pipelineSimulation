@@ -5,6 +5,11 @@
             <parameter name="alpha" type="double" value="2.0"/>
             <parameter name="carrierFrequency" type="double" value="5.890e9"/>
         </AnalogueModel>
+        <!-- Fast fading based on Nakagami-m distribution (Eckhoff & Sommer):
+             m=1.5 for d < 80m (LOS-dominant), m=0.75 for d >= 80m (multipath-rich / NLOS) -->
+        <AnalogueModel type="NakagamiFading">
+            <parameter name="constM" type="bool" value="false"/>
+        </AnalogueModel>
     </AnalogueModels>
     <Decider type="Decider80211p">
         <parameter name="centerFrequency" type="double" value="5.890e9"/>
