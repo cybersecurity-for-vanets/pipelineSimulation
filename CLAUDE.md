@@ -1,76 +1,63 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to assistant agents when working with code in this repository.
 
 ## Project
 
-Simulation pipeline (SUMO + Veins + OMNeT++) that measures the cost of FF1 format-preserving encryption (AES/LEA/SPECK block ciphers) on V2X CAM messages across calibrated traffic scenarios. Traffic is calibrated only with CET-SP MSVP survey data (2019 report `docs/relatorio-msvp-2019-revisao-2-junho-22.pdf`, 2016–2018 in `docs/msvp_<year>/`); TomTom was removed on branch `cet-calibration`. Observed CET (year, hour) volumes (`y2019h07`…) drive calibration and validation only. The V2V experiment uses one demand level per HCM level of service reached by each topology (`s<factor×100>` multiples of the 2019 mean, chosen by `map_los.py`; `s100` = CET peak): 6 for highway, 4 for urban_road, 4 for intersection, × 4 protocols × 10 seeds = 560 runs. Protocol definitions live in `conf/protocols.json`, and the README is written in Portuguese, as are most script messages and comments. Keep new user-facing output consistent with that.
+Simulation pipeline (SUMO + Veins + OMNeT++) measuring the computational and network latency costs of FF1 format-preserving encryption (AES/LEA/SPECK block ciphers) on V2X CAM messages across calibrated traffic scenarios. Developed for a Master's Thesis at POLI-USP.
 
-Realism is the goal: prefer ETSI/OBU-based parameters over Veins defaults.
+The experimental matrix evaluates **3 topologies** (`highway`, `urbanRoad`, `intersection`) $\times$ **demand levels** (mapped to HCM Levels of Service A–F via `src.traffic.map_los`) $\times$ **4 protocols** (`baseline`, `FF1_AES`, `FF1_LEA`, `FF1_SPECK`) $\times$ **10 seeds** = **560 runs**. Protocol definitions reside in `config/protocols.json`.
+
+All code and documentation are strictly in English.
 
 ## Commands
 
-No tests, linter, formatter, or `requirements.txt` are configured. Dependencies are `requests`, `optuna`, `pandas`, `numpy`, `scipy`, `matplotlib`, plus SUMO, OMNeT++ 6.2, and Veins 5.3.1. On this machine the default `python` (the OMNeT++ `.venv`) lacks `requests`; `~/bin/.venv/env/bin/python` has everything.
+Python dependencies: `numpy`, `scipy`, `pandas`, `matplotlib`, `requests`, `optuna`, `sumolib`.
 
 ```bash
-# Full pipeline (runs stages in sequence and stops on the first failure)
-python src/run_pipeline.py
+# Full pipeline end-to-end
+python run_pipeline.py
 
-# Any single stage (run from the repo root; stage scripts resolve paths from their own location)
-python src/calibrate_stage1.py
-python src/benchmark_crypto.py
-python src/generate_stage2_configs.py
-python src/orchestrate_stage3_baseline.py   # what run_pipeline.py actually calls
-python src/orchestrate_stage3.py            # all protocols; commented out in run_pipeline.py
-python src/analyze_stage4_results.py
+# Individual stages
+python -m src.traffic.fetch_network
+python -m src.traffic.calibrate_krauss
+python -m src.traffic.map_los
+python -m src.traffic.generate_routes
+python -m src.crypto.benchmark
+python -m src.simulation.generate_configs
+python -m src.simulation.orchestrate --baseline-only
+python -m src.simulation.orchestrate
+python -m src.analysis.extract_metrics
 
-# Optional plots after stage 4 (not called by run_pipeline.py)
-python src/plot_kpi_charts.py
-python src/generate_kpi_heatmaps.py
+# Post-analysis visualization
+python -m src.analysis.plot_curves
+python -m src.analysis.plot_scatter
+python -m src.analysis.plot_heatmaps
+python -m src.analysis.plot_kpis
 ```
 
-Build the Veins latency plugin by hand (normally done by `orchestrate_stage3.py:build_latency_plugin`):
-
+Build the Veins latency plugin manually:
 ```bash
-cd src/latency
+cd sim/src
 opp_makemake --make-so -f -o LatencyPlugin -I "$VEINS_SRC" -L "$VEINS_SRC" -l veins
 make MODE=release    # produces out/**/libLatencyPlugin.dylib
 ```
 
-The FF1 benchmark compiles with `$CXX`, falling back to `clang++` then `g++`, using `-std=c++17 -O2`.
+Run FF1 benchmark standalone:
+```bash
+bash sim/crypto_benchmark/run_benchmark.sh
+```
 
-The only correctness checks are built into the pipeline:
-- `benchmark_crypto.py` validates AES-128 (FIPS-197), LEA-128 (KISA), SPECK-128/128, and NIST FF1-AES128 examples 1–3 before timing. A failure aborts the stage.
-- The `ff1DecryptFailures` scalar must be 0 in every run.
+## Architecture & Conventions
 
-## Hardcoded local paths
-
-`orchestrate_stage3.py`, `orchestrate_stage3_baseline.py` (via import), and `analyze_stage4_results.py` hardcode macOS paths under `/Users/fabiotorres/` (`OPP_RUN`, `OPP_MAKEMAKE`, `VEINS_*`, `SCAVETOOL_BIN`) and `/usr/local/bin/sumo`. They also check for `/Volumes/PSSD T7/simulationData/`. If that directory exists, stage 3 writes its logs and results there, and stage 4 reads results from there, instead of using `logs/` and `results/rawData/` in the project. Check this before looking for output in the project folder.
-
-## Architecture
-
-The stages form a chain where each one consumes the previous stage's files in `conf/`:
-
-1. **Data and calibration.** Every stage-1 constant lives in `conf/calibration_params.json`, read only through `calibration/params.py`. `conf/routes.json` defines one CET speed section per route and direction (points `[lat, lon]` in travel order, `cet_distance_m`, `demand`). Sites: highway = Av. 23 de Maio, urban_road = R. da Consolação, intersection = Av. Nove de Julho × Av. São Gabriel. `fetch_data.py` downloads roads from Overpass (falling back to tiled OSM API calls), runs `netconvert` without `--tls.guess` (joining the OSM node groups in `network.join_nodes` into one junction), maps routes to SUMO edges (`sumo_route_utils.py`, which also straightens artificial turns between parallel carriageways), repairs the network along the routes (`network_repair.py`: shared through lanes that reach the route end, and at least `network.min_main_green_share` of green per direction with a CET count, baked into the `.net.xml`), finds on/off ramps for routes with a `count_point` (highway; split by lane share, capped by `network.max_ramp_veh_h_per_lane` and by the count point's flow per lane, yield-only on-ramps skipped, turned into per-entry/exit flows by `generate_routes.route_demands`) and writes `conf/cet_scenarios.json`. CET hourly volumes and speeds are in `conf/cet_volumes.csv` / `conf/cet_speeds.csv` (read by `cet_data.py`, volumes converted with `cet.pce`). `calibrate_stage1.py` uses the observed volume as demand (`demand: cet_volume`); Av. São Gabriel has no count, so its flow per level is bisected against the CET speed (`demand: speed_bisection`), falling back to the same 2019 hour when a year has no speed. Signalized topologies get green-wave offsets (`tlsCoordinator.py` → `osmFiles/<topology>.tls_offsets.add.xml`). One Krauss profile per topology (`krauss.bounds`, including `speedFactor`/`speedDev`) is chosen by TPE on `cet.calibration` (all 2019 hours; intersection, which only has 2019 volumes, uses `hours_by_topology` 7/9/17/19h) and validated on every other observed level with a CET speed (highway 2016, urban_road 2017, intersection 2019 8h/18h); a topology passes when the validation RMSE / mean CET speed ≤ `acceptance.max_validation_relative_rmse` (`--verdict-only` re-applies it), following Khaleghian et al. 2023 (see `docs/calibracao_etapa1.md`). Outputs `conf/route_flows_calibrated.json` (flow per route and level) and `conf/krauss_calibration.json` (profile + calibration/validation report). `map_los.py` sweeps demand (`los.factors` × the 2019 mean) on the calibrated model and classifies each factor by HCM level of service (density for highway, travel speed / free-flow speed for urban_road, delay per signal for intersection; limits in `los.*`) into `conf/los_sweep.json`. `calibration/simulation.py` runs SUMO for calibration. `--smoke` runs a minutes-long code check whose outputs are flagged and must not be used.
-2. **Routes.** `generate_routes.py` writes `trafficXmlFiles/<topology>_<level>.rou.xml` and `.sumocfg` for each LOS level in `conf/los_sweep.json` (it deletes the old files there first), plus `conf/flow_levels.json`. That file and `src/flow_levels.py` are the contract for stages 2–4 and the plots: level ids (`s050`; `y2019h07` still parses), labels, kind, `los`, and veh/h/lane per topology and level. Each topology has its own level list.
-3. **Crypto timings.** `benchmark_crypto.py` builds `src/crypto_benchmark/ff1_benchmark.cc`, which reuses the same cipher sources as the Veins module, and writes `conf/crypto_timings.json`. Those medians become the per-protocol `cryptoTxDelay`/`cryptoRxDelay`. The timings come from the host machine, not an OBU, and the stage prints a warning about this.
-4. **OMNeT++ config.** `generate_stage2_configs.py` joins `protocols.json` with `crypto_timings.json` (via `protocols.py`) and writes `conf/omnetpp.ini` plus one `conf/scenario_<topology>_<level>.launchd.xml` per scenario. Each run is a section `[Config Config_<topology>_<protocol>_<level>]` (e.g. `Config_urbanRoad_FF1_AES_y2019h07`). Stage 3 finds these sections by regex and stage 4 splits the level with `flow_levels.split_level`, so the naming scheme is a contract.
-5. **Simulation.** The orchestrators build the plugin, start `veins_launchd` on port 9999 from `conf/`, and run `opp_run` in Cmdenv once per config and seed, with 6 parallel workers. Stdout and stderr go to `logs/<topology>/<config>/run_<seed>.{out,err}`, and results go to `results/rawData/`. `orchestrate_stage3_baseline.py` imports `orchestrate_stage3.py` and keeps only configs named `<topology>_baseline_*`.
-6. **Analysis.** `analyze_stage4_results.py` runs `opp_scavetool` on the `.sca` files to produce `scavetool_export.csv`, then aggregates mean and 95% CI into `final_metrics_summary.csv` and plots. Protocol and topology are parsed from config names.
-
-### C++ module (`src/latency`)
-
-`LatencyTraCIDemo11p` extends Veins `TraCIDemo11p` and is loaded as a shared library, not as a standalone binary. It is the only place where simulated behavior is defined.
-
-- **Encryption is real and timing is modeled.** With `cryptoCipher` set to anything other than `none`, each CAM is actually encrypted with FF1 on send and decrypted on receive, using plaintext built from fields the receiver sees. Simulated time advances only by `cryptoTxDelay`/`cryptoRxDelay`, not by the real computation time.
-- **Single-core OBU model.** One FIFO CPU queue (`cpuBusyUntil`) is shared by TX and RX work. Queue wait, busy time, and deadline misses are recorded.
-- **Metrics as bins.** Processing latency is a 200-bin histogram (`procBin_k`, 10 µs bins), which the stage 4 script reads. PDR is binned by distance. These are summable across nodes.
-- **Warmup.** Statistics restart at `warmupTime`, but protocol state is kept.
-
-`cam_model.json`, `antenna.xml`, and `vehicle_types.xml` in `conf/` set the CAM and radio parameters. The `.ned` files in `conf/` define the network.
-
-## Conventions
-
-- `conf/` is mostly gitignored. Only `routes.json`, `cet*.csv`, `protocols.json`, `calibration_params.json`, `crypto_timings.json`, `cam_model.json`, `coordinates_scenaries.json`, and the `pipelineSimulation/*.ned` file are tracked. Old TomTom data (`tomtom_*.json`, `jobs_*.json`) may still sit in `conf/`, unused. Generated files there are local artifacts, and deleting them forces the earlier stages to run again.
-- `src/latency/Makefile`, `out/`, and `*.dylib` are generated and ignored.
-- Stage 2 writes `omnetpp.ini` with `sim-time-limit = WARMUP + MEASUREMENT` and `repeat = 10`. Stage 3 reads `repeat` from that file rather than hardcoding it.
+- `config/`: Central JSON configuration parameters and intermediate generated contracts (`flow_levels.json`, `los_sweep.json`, `krauss_calibration.json`).
+- `data/`: Curated empirical traffic surveys from CET-SP (`cet_volumes.csv`, `cet_speeds.csv`) and route GPS definitions (`routes.json`).
+- `sim/`: OMNeT++ / Veins simulation assets (`sim/omnetpp.ini`, `sim/ned/`, `sim/src/`, `sim/crypto_benchmark/`).
+- `src/`: Modular Python codebase:
+  - `src/env.py`: Single source of truth for path resolution and environment overrides (`OMNETPP_HOME`, `VEINS_HOME`, `SUMO_HOME`, `SIM_DATA_DIR`).
+  - `src/traffic/`: OSM fetching, network repair, Krauss Optuna calibration, and route generation.
+  - `src/crypto/`: C++ benchmark execution and statistical aggregation.
+  - `src/simulation/`: Configuration generator and parallel orchestrator CLI.
+  - `src/analysis/`: Scavetool metric extraction, paired differences, TOST equivalence tests, and plotting.
+- `docs/`: Technical reports, mathematical metric definitions, and plotting guidelines in English.
+- `results/`: Output data (`results/rawData/` and `results/plots/`).

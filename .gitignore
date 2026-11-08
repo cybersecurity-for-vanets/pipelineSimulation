@@ -1,42 +1,29 @@
-
-# --- Omnet++ ---
-.bundle
-.sass-cache
-Gemfile.lock
-_site
-*.gem
-
-# --- Python ---
+# --- Build & Compiled Artifacts ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
+*.dylib
+sim/src/Makefile
+sim/src/out/
+sim/crypto_benchmark/out/
+out/
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
 # --- Virtual Environments ---
 venv/
 ENV/
 env/
 .env
-.venv
+.venv/
 
-# --- SUMO Simulation Output & Logs ---
+# --- Simulation Execution Outputs & Logs ---
+logs/*
+osmFiles/*
+results/**
+trafficXmlFiles/**
 *.log
 *.sumo.cfg~
 traci.log
@@ -50,6 +37,17 @@ tls_state.xml
 *.stat.xml
 *.sbx
 *.sub
+*.sca
+*.vec
+
+# --- Intermediate Generated Configurations & Simulations ---
+config/cet_scenarios.json
+config/flow_levels.json
+config/krauss_calibration.json
+config/los_sweep.json
+config/route_flows_calibrated.json
+sim/omnetpp.ini
+sim/scenario_*.launchd.xml
 
 # --- Temporary & Backup Files ---
 *.bak
@@ -66,34 +64,8 @@ Thumbs.db
 .project
 .pydevproject
 .settings/
+.claude/
 
-# --- Reinforcement Learning / Data / Checkpoints ---
-*.pth
-*.pt
-*.ckpt
-runs/
-tensorboard/
-csv/
-*.db
-
-
-# --- Ignore specific files ---
-logs/*
-osmFiles/*
-results/**
-trafficXmlFiles/**
-conf/*
-!conf/routes.json
-!conf/cet*.csv
-!conf/protocols.json
-!conf/calibration_params.json
-!conf/crypto_timings.json
-!conf/cam_model.json
-!conf/pipelineSimulation/
-conf/pipelineSimulation/*
-!conf/pipelineSimulation/LatencyTraCIDemo11p.ned
-src/latency/Makefile
-src/latency/out/
-src/crypto_benchmark/out/
-*.dylib
-plots_09-26/*
+# --- External / Research Papers & Large Datasets ---
+docs/*.pdf
+docs/msvp_*/

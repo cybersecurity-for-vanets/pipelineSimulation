@@ -1,0 +1,27 @@
+{
+  "PDR (%)": {
+    "margin": 1.0,
+    "unit": "percentage_points",
+    "description": "Equivalence margin of 1 percentage point for Packet Delivery Ratio"
+  },
+  "CBR (%)": {
+    "margin": 1.0,
+    "unit": "percentage_points",
+    "description": "Equivalence margin of 1 percentage point for Channel Busy Ratio"
+  },
+  "ipgMs": {
+    "margin": 5.0,
+    "unit": "ms",
+    "description": "Equivalence margin of 5 ms for Inter-Packet Gap"
+  },
+  "aoiMs": {
+    "margin": 5.0,
+    "unit": "ms",
+    "description": "Equivalence margin of 5 ms for Age of Information"
+  },
+  "camBits": {
+    "margin": 8.0,
+    "unit": "bits",
+    "description": "Equivalence margin of 1 byte (8 bits) for CAM size"
+  }
+}
