@@ -63,18 +63,15 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = [executor.submit(stage3.run_simulation, task) for task in tasks]
             for future in concurrent.futures.as_completed(futures):
-                print(future.result())
+                try:
+                    print(future.result())
+                except Exception as e:
+                    print(f"[FAIL] Exceção na simulação: {e}")
     finally:
         print("[LAUNCHD] Encerrando o daemon veins_launchd...")
         launchd_proc.terminate()
         log_file.close()
 
 if __name__ == "__main__":
-    if os.path.isdir(stage3.SSD_DIR):
-        stage3.LOGS_DIR = os.path.join(stage3.SSD_DIR, "logs")
-        stage3.RESULTS_DIR = os.path.join(stage3.SSD_DIR, "results", "rawData")
-    else:
-        stage3.LOGS_DIR = os.path.join(stage3.BASE_DIR, "logs")
-        stage3.RESULTS_DIR = os.path.join(stage3.BASE_DIR, "results", "rawData")
-    os.makedirs(stage3.RESULTS_DIR, exist_ok=True)
+    stage3.setup_storage()
     main()

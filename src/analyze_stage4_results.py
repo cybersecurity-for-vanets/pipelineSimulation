@@ -21,11 +21,18 @@ except ImportError:
 # 1. DIRETÓRIOS E CONFIGURAÇÕES
 # ==============================================================================
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
-if os.path.isdir(SSD_DIR):
-    RESULTS_DIR = os.path.join(SSD_DIR, "results", "rawData")
-else:
-    RESULTS_DIR = os.path.join(PROJECT_DIR, "results", "rawData")
+SSD_DIR = "/Volumes/PSSD T7/simulationData"
+
+def _resolve_results_dir():
+    ssd_path = os.path.join(SSD_DIR, "results", "rawData")
+    local_path = os.path.join(PROJECT_DIR, "results", "rawData")
+    if os.path.isdir(ssd_path) and any(f.endswith(".sca") for f in os.listdir(ssd_path)):
+        return ssd_path
+    if os.path.isdir(local_path) and any(f.endswith(".sca") for f in os.listdir(local_path)):
+        return local_path
+    return ssd_path if os.path.isdir(SSD_DIR) else local_path
+
+RESULTS_DIR = _resolve_results_dir()
 OUTPUT_CSV = os.path.join(RESULTS_DIR, "scavetool_export.csv")
 SUMMARY_CSV = os.path.join(RESULTS_DIR, "final_metrics_summary.csv")
 PLOTS_DIR = os.path.join(RESULTS_DIR, "../plots")

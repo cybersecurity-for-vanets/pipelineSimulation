@@ -2,16 +2,18 @@ import os
 import sys
 import re
 import glob
+import shutil
+import argparse
 import subprocess
 import concurrent.futures
 import json
 import time
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SSD_DIR = os.path.dirname("/Volumes/PSSD T7/simulationData/")
+SSD_DIR = "/Volumes/PSSD T7/simulationData"
 CONF_DIR = os.path.join(BASE_DIR, "conf")
-LOGS_DIR = None # os.path.join(BASE_DIR, "logs")
-RESULTS_DIR = None #os.path.join(BASE_DIR, "results", "rawData")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+RESULTS_DIR = os.path.join(BASE_DIR, "results", "rawData")
 INI_FILE = os.path.join(CONF_DIR, "omnetpp.ini")
 SCENARIOS_CONF_PATH = os.path.join(CONF_DIR, "coordinates_scenaries.json")
 
@@ -24,7 +26,78 @@ NED_PATH = f"/Users/fabiotorres/veins-veins-5.3.1/ned:{CONF_DIR}"
 LATENCY_APP_DIR = os.path.join(BASE_DIR, "src", "latency")
 LATENCY_PLUGIN_LIB = None
 
-# os.makedirs(RESULTS_DIR, exist_ok=True)
+def get_free_space_gb(path):
+    """Retorna o espaço livre em GB para o caminho fornecido."""
+    target = path
+    while not os.path.exists(target) and os.path.dirname(target) != target:
+        target = os.path.dirname(target)
+    try:
+        return shutil.disk_usage(target).free / (1024 ** 3)
+    except Exception:
+        return 0.0
+
+def setup_storage(storage_preference="auto", min_gb_required=10.0):
+    """
+    Configura LOGS_DIR e RESULTS_DIR com base na disponibilidade de espaço em disco.
+    storage_preference: 'auto', 'ssd', ou 'local'.
+    """
+    global LOGS_DIR, RESULTS_DIR
+
+    ssd_mount = "/Volumes/PSSD T7"
+    ssd_mounted = os.path.isdir(ssd_mount)
+    ssd_free_gb = get_free_space_gb(ssd_mount) if ssd_mounted else 0.0
+    local_free_gb = get_free_space_gb(BASE_DIR)
+
+    chosen = None
+    if storage_preference == "ssd":
+        if not ssd_mounted:
+            raise FileNotFoundError(f"[ERRO] SSD externo não está montado em '{ssd_mount}'.")
+        if ssd_free_gb < min_gb_required:
+            raise OSError(
+                f"[SEM ESPAÇO] SSD '{ssd_mount}' possui apenas {ssd_free_gb*1024:.1f} MB livres "
+                f"(mínimo necessário: {min_gb_required:.1f} GB).\n"
+                f"Dica: '/Volumes/PSSD T7/simulationData.old' está ocupando espaço no SSD. "
+                f"Libere espaço ou utilize '--storage local'."
+            )
+        chosen = SSD_DIR
+    elif storage_preference == "local":
+        if local_free_gb < min_gb_required:
+            raise OSError(
+                f"[SEM ESPAÇO] Armazenamento local possui apenas {local_free_gb:.1f} GB livres "
+                f"(mínimo necessário: {min_gb_required:.1f} GB)."
+            )
+        chosen = BASE_DIR
+    else:  # auto
+        if ssd_mounted and ssd_free_gb >= min_gb_required:
+            chosen = SSD_DIR
+        elif local_free_gb >= min_gb_required:
+            if ssd_mounted and ssd_free_gb < min_gb_required:
+                print(f"[AVISO] SSD em '{ssd_mount}' está quase cheio ({ssd_free_gb*1024:.1f} MB livres).")
+                print(f"[AVISO] Alternando automaticamente para o armazenamento local ({local_free_gb:.1f} GB livres).")
+                print(f"        (Para liberar o SSD, verifique '/Volumes/PSSD T7/simulationData.old')")
+            chosen = BASE_DIR
+        else:
+            raise OSError(
+                f"[SEM ESPAÇO] Espaço em disco insuficiente em todos os destinos!\n"
+                f" - SSD ({ssd_mount}): {ssd_free_gb*1024:.1f} MB livres\n"
+                f" - Local ({BASE_DIR}): {local_free_gb:.1f} GB livres\n"
+                f"Mínimo necessário: {min_gb_required:.1f} GB. Libere espaço antes de executar as simulações."
+            )
+
+    if chosen == SSD_DIR:
+        LOGS_DIR = os.path.join(SSD_DIR, "logs")
+        RESULTS_DIR = os.path.join(SSD_DIR, "results", "rawData")
+    else:
+        LOGS_DIR = os.path.join(BASE_DIR, "logs")
+        RESULTS_DIR = os.path.join(BASE_DIR, "results", "rawData")
+
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    print(f"[STORAGE] Destino: {chosen}")
+    print(f"          LOGS_DIR:    {LOGS_DIR}")
+    print(f"          RESULTS_DIR: {RESULTS_DIR}")
+    print(f"          Espaço livre: {get_free_space_gb(RESULTS_DIR):.2f} GB")
+    return chosen
 
 def load_known_topologies():
     """Carrega dinamicamente as chaves de topologia cadastradas no JSON."""
@@ -107,7 +180,10 @@ def run_simulation(args):
     
     # Estrutura adaptativa de logs por topologia e configuração
     out_log_dir = os.path.join(LOGS_DIR, top_id, config_name)
-    os.makedirs(out_log_dir, exist_ok=True)
+    try:
+        os.makedirs(out_log_dir, exist_ok=True)
+    except OSError as e:
+        return f"[FAIL] {config_name} | Seed {seed:02d} (Erro ao criar diretório: {e})"
 
     cmd = [
         OPP_RUN, "-l", VEINS_LIB, "-l", LATENCY_PLUGIN_LIB, "-n", NED_PATH,
@@ -121,15 +197,18 @@ def run_simulation(args):
     stdout_path = os.path.join(out_log_dir, f"run_{seed}.out")
     stderr_path = os.path.join(out_log_dir, f"run_{seed}.err")
 
-    with open(stdout_path, "w") as out, open(stderr_path, "w") as err:
-        proc = subprocess.run(cmd, stdout=out, stderr=err, cwd=CONF_DIR)
+    try:
+        with open(stdout_path, "w") as out, open(stderr_path, "w") as err:
+            proc = subprocess.run(cmd, stdout=out, stderr=err, cwd=CONF_DIR)
+    except OSError as e:
+        return f"[FAIL] {config_name} | Seed {seed:02d} (Erro de I/O: {e})"
 
     if proc.returncode == 0:
         return f"[OK] {config_name} | Seed {seed:02d}"
     else:
         return f"[FAIL] {config_name} | Seed {seed:02d} (Code {proc.returncode})"
 
-def main():
+def main(workers=6):
     global LATENCY_PLUGIN_LIB
     print("[BUILD] Compilando módulo de latência...")
     LATENCY_PLUGIN_LIB = build_latency_plugin()
@@ -157,10 +236,13 @@ def main():
         print(f"Total de simulações agendadas: {len(tasks)}")
 
         # Execução paralela utilizando hilos para o chip M1
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [executor.submit(run_simulation, task) for task in tasks]
             for future in concurrent.futures.as_completed(futures):
-                print(future.result())
+                try:
+                    print(future.result())
+                except Exception as e:
+                    print(f"[FAIL] Exceção na simulação: {e}")
 
     finally:
         print("[LAUNCHD] Encerrando o daemon veins_launchd...")
@@ -168,12 +250,16 @@ def main():
         log_file.close()
 
 if __name__ == "__main__":
-    if os.path.isdir(SSD_DIR):
-        LOGS_DIR = os.path.join(SSD_DIR, "logs")
-        RESULTS_DIR = os.path.join(SSD_DIR, "results", "rawData")
-        os.makedirs(SSD_DIR, exist_ok=True)
-    else:
-        LOGS_DIR = os.path.join(BASE_DIR, "logs")
-        RESULTS_DIR = os.path.join(BASE_DIR, "results", "rawData")
-        os.makedirs(RESULTS_DIR, exist_ok=True)
-    main()
+    parser = argparse.ArgumentParser(description="Orquestração Dinâmica - Etapa 3")
+    parser.add_argument(
+        "--storage",
+        choices=["auto", "ssd", "local"],
+        default="auto",
+        help="Destino dos dados: 'auto' (prioriza SSD com espaço suficiente, caso contrário usa disco local), 'ssd' ou 'local'"
+    )
+    parser.add_argument("--workers", type=int, default=6, help="Número de threads simultâneas (padrão: 6)")
+    parser.add_argument("--min-gb", type=float, default=10.0, help="Espaço mínimo livre exigido em GB (padrão: 10.0)")
+    args = parser.parse_args()
+
+    setup_storage(storage_preference=args.storage, min_gb_required=args.min_gb)
+    main(workers=args.workers)
