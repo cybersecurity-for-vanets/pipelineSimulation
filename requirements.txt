@@ -5,6 +5,7 @@ pandas>=2.0.0
 matplotlib>=3.7.0
 requests>=2.28.0
 optuna>=3.2.0
+pyproj>=3.5.0
 
 # SUMO Python library (optional: if installed via pip instead of system SUMO)
 # eclipse-sumo>=1.20.0

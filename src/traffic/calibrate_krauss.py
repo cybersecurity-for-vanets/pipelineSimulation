@@ -37,7 +37,7 @@ from pathlib import Path
 import optuna
 
 from src.analysis.flow_levels import level_id
-from src.env import CONFIG_DIR, SUMO_BINARY
+from src.env import CONFIG_DIR, ROOT_DIR, SUMO_BINARY
 from src.traffic.cet_data import load_hourly_speeds, load_hourly_volumes
 from src.traffic.generate_routes import build_route_file, tls_offsets_path
 from src.traffic.params import load_calibration_params
@@ -190,7 +190,7 @@ def coordinate_traffic_lights(calibration):
                 "--net-file", str(network_path(topology)),
                 "--route-file", str(route_file),
                 "--output-file", str(offsets_path),
-            ], capture_output=True, text=True, cwd=BASE_DIR)
+            ], capture_output=True, text=True, cwd=ROOT_DIR)
         if result.returncode != 0:
             raise RuntimeError(f"tlsCoordinator falhou para '{topology}': {result.stderr.strip()}")
         print(f"[SEMÁFOROS] {topology}: offsets coordenados salvos em {offsets_path}")

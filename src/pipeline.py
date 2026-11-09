@@ -53,7 +53,7 @@ def main():
         help="Simulate only the baseline protocol (no encryption) in Stage 3",
     )
     parser.add_argument(
-        "--skip-stage1",
+        "--skip-calibration",
         action="store_true",
         help="Skip Stage 1 traffic calibration (reuse pre-calibrated routes in config/ & trafficXmlFiles/)",
     )
@@ -68,6 +68,12 @@ def main():
         default=6,
         help="Number of concurrent simulation workers for Stage 3 (default: 6)",
     )
+    parser.add_argument(
+        "--storage",
+        choices=["auto", "ssd", "local"],
+        default="auto",
+        help="Data storage destination (default: 'auto')",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -77,7 +83,7 @@ def main():
     print("=" * 60)
 
     # Stage 1: Traffic Modeling & Empirical Calibration
-    if not args.skip_stage1:
+    if not args.skip_calibration:
         run_step("Stage 1.1 - OpenStreetMap Fetch & Network Building", "src.traffic.fetch_network")
         run_step("Stage 1.2 - Krauss Model Micro-Calibration (CET-SP)", "src.traffic.calibrate_krauss")
         run_step("Stage 1.3 - HCM Level of Service Sweep", "src.traffic.map_los")
@@ -100,6 +106,9 @@ def main():
         stage3_args.append("--baseline-only")
     elif args.protocol:
         stage3_args.extend(["--protocol", args.protocol])
+
+    if args.storage:
+        stage3_args.extend(["--storage", args.storage])
 
     run_step("Stage 3.0 - Parallel Simulation Orchestration", "src.simulation.orchestrate", stage3_args)
 

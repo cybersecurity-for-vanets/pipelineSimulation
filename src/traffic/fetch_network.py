@@ -23,7 +23,7 @@ from pathlib import Path
 
 import requests
 
-from src.env import CONFIG_DIR, DATA_DIR, OSM_DIR
+from src.env import CONFIG_DIR, DATA_DIR, OSM_DIR, ROOT_DIR
 from src.traffic.network_repair import repair_network
 from src.traffic.params import load_calibration_params
 from src.traffic.route_utils import build_topology_edge_routes, load_network, network_path, route_ramps
@@ -178,7 +178,7 @@ def convert_osm_to_net(topology, osm_path, join_nodes=()):
         node_file.write_text("<nodes>\n" + "".join(f'    <join nodes="{" ".join(group)}"/>\n' for group in join_nodes)
                              + "</nodes>\n", encoding="utf-8")
         command += ["--node-files", str(node_file)]
-    result = subprocess.run(command, capture_output=True, text=True, cwd=BASE_DIR)
+    result = subprocess.run(command, capture_output=True, text=True, cwd=ROOT_DIR)
     if node_file:
         node_file.unlink()
     if result.returncode != 0:

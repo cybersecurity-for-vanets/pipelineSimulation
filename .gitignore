@@ -22,7 +22,7 @@ env/
 # --- Simulation Execution Outputs & Logs ---
 logs/*
 osmFiles/*
-results/**
+results*/**
 trafficXmlFiles/**
 *.log
 *.sumo.cfg~

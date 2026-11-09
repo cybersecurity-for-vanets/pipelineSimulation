@@ -22,6 +22,7 @@ from src.env import (
     DATA_STORAGE_DIR,
     DEFAULT_EXTERNAL_DIR,
     LOGS_DIR,
+    OMNETPP_HOME,
     OPP_MAKEMAKE,
     OPP_RUN,
     RAW_DATA_DIR,
@@ -156,6 +157,15 @@ def find_latency_plugin():
 
 
 def build_latency_plugin():
+    env = os.environ.copy()
+    omnet_bin = str(OMNETPP_HOME / "bin")
+    if omnet_bin not in env.get("PATH", ""):
+        env["PATH"] = f"{omnet_bin}:{env.get('PATH', '')}"
+    configfile = OMNETPP_HOME / "Makefile.inc"
+    if configfile.is_file():
+        env["OMNETPP_CONFIGFILE"] = str(configfile)
+        env["__omnetpp_root_dir"] = str(OMNETPP_HOME)
+
     subprocess.run(
         [
             str(OPP_MAKEMAKE),
@@ -171,9 +181,10 @@ def build_latency_plugin():
             "veins",
         ],
         cwd=str(LATENCY_APP_DIR),
+        env=env,
         check=True,
     )
-    subprocess.run(["make", "MODE=release"], cwd=str(LATENCY_APP_DIR), check=True)
+    subprocess.run(["make", "MODE=release"], cwd=str(LATENCY_APP_DIR), env=env, check=True)
     return find_latency_plugin()
 
 
@@ -214,7 +225,7 @@ def run_simulation(args):
 
     try:
         with open(stdout_path, "w") as out, open(stderr_path, "w") as err:
-            proc = subprocess.run(cmd, stdout=out, stderr=err, cwd=str(SIM_DIR))
+            proc = subprocess.run(cmd, stdout=out, stderr=err, cwd=str(SIM_DIR), env=os.environ)
     except OSError as e:
         return f"[FAIL] {config_name} | Seed {seed:02d} (I/O Error: {e})"
 
