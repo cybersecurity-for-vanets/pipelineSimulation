@@ -2,11 +2,8 @@
 
 Compartilhado pela etapa 4 (src/) e pelos gráficos (plotting/). Os ids e rótulos dos níveis vêm de flow_levels.py.
 
-Regra visual (ver plotting/CONVENCOES.md):
-- demanda CET (o pico CET, s100, ou um nível observado y<ano>h<hora>): marcador cheio e segmento de linha opaco;
-  é a faixa de demanda em que o modelo foi calibrado e validado;
-- demanda extrapolada (os demais níveis por LOS): marcador vazado (preenchimento branco) e segmento esmaecido
-  (EXTRAPOLATED_LINE_ALPHA) sempre que uma das pontas for extrapolada. O estilo da linha fica livre para o protocolo.
+Regra visual: plot_level_series() desenha todos os níveis com o mesmo estilo (sem diferenciar demanda CET de
+demanda extrapolada); scatter_levels() e level_origin_handles() ainda mantêm essa diferenciação.
 - annotate_los() escreve a letra do LOS do HCM de cada nível no topo do painel.
 """
 import numpy as np
@@ -89,35 +86,30 @@ def annotate_los(axis, topology, x, levels, color="#404040", fontsize=7):
         if los is None or not np.isfinite(value) or level in seen:
             continue
         seen.add(level)
-        axis.text(value, 1.01, los, transform=transform, ha="center", va="bottom", fontsize=fontsize, color=color,
-                  fontweight="bold" if not is_extrapolated(level) else "normal")
+        axis.text(value, 1.01, los, transform=transform, ha="center", va="bottom", fontsize=fontsize, color=color)
 
 
 def plot_level_series(axis, x, y, levels, *, color, marker="o", linestyle="-", yerr=None, linewidth=1.6,
                       markersize=5, capsize=2, zorder=2):
-    """Uma série sobre o eixo de fluxo: pontos ligados em ordem de x, com o estilo demanda CET / extrapolada."""
+    """Uma série sobre o eixo de fluxo: pontos ligados em ordem de x, todos com o mesmo estilo.
+
+    `levels` é mantido na assinatura por compatibilidade; demanda CET e extrapolada não são diferenciadas.
+    """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
-    synthetic = extrapolated_mask(levels)
     err = None if yerr is None else np.asarray(yerr, dtype=float)
     keep = np.isfinite(x) & np.isfinite(y)
     order = np.argsort(x[keep], kind="stable")
-    x, y, synthetic = x[keep][order], y[keep][order], synthetic[keep][order]
+    x, y = x[keep][order], y[keep][order]
     if err is not None:
         err = np.nan_to_num(err[keep][order])
     if x.size == 0:
         return
 
-    for start in range(x.size - 1):
-        faded = synthetic[start] or synthetic[start + 1]
-        axis.plot(x[start:start + 2], y[start:start + 2], color=color, linestyle=linestyle, linewidth=linewidth,
-                  alpha=EXTRAPOLATED_LINE_ALPHA if faded else 1.0, zorder=zorder)
+    axis.plot(x, y, color=color, linestyle=linestyle, linewidth=linewidth, marker=marker, markersize=markersize,
+              zorder=zorder)
     if err is not None:
         axis.errorbar(x, y, yerr=err, fmt="none", ecolor=color, elinewidth=1.0, capsize=capsize, zorder=zorder)
-    axis.plot(x[~synthetic], y[~synthetic], linestyle="", marker=marker, markersize=markersize, color=color,
-              zorder=zorder + 1)
-    axis.plot(x[synthetic], y[synthetic], linestyle="", marker=marker, markersize=markersize, color=color,
-              markerfacecolor=EXTRAPOLATED_FACE, markeredgewidth=1.3, zorder=zorder + 1)
 
 
 def scatter_levels(axis, x, y, levels, *, color, marker="o", s=22, alpha=0.7, **kwargs):
