@@ -26,6 +26,7 @@ else:
 
 RESULTS_DIR = DATA_STORAGE_DIR / "results"
 RAW_DATA_DIR = RESULTS_DIR / "rawData"
+PROCESSED_DATA_DIR = RESULTS_DIR / "processed"  # per-run KPIs, summaries and statistical tests (Stage 4)
 PLOTS_DIR = RESULTS_DIR / "plots"
 LOGS_DIR = DATA_STORAGE_DIR / "logs"
 
@@ -73,5 +74,5 @@ for p in reversed(dyld_paths):
 os.environ["DYLD_LIBRARY_PATH"] = current_dyld
 
 # Ensure required runtime output directories exist
-for path in (RESULTS_DIR, RAW_DATA_DIR, PLOTS_DIR, LOGS_DIR, OSM_DIR, TRAFFIC_DIR, CONFIG_DIR):
+for path in (RESULTS_DIR, RAW_DATA_DIR, PROCESSED_DATA_DIR, PLOTS_DIR, LOGS_DIR, OSM_DIR, TRAFFIC_DIR, CONFIG_DIR):
     path.mkdir(parents=True, exist_ok=True)

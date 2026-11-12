@@ -6,14 +6,13 @@ comparative summary tables (.csv, .md, and LaTeX .tex) specifically tailored
 for the Results and Discussion chapter of the Master's thesis / paper.
 
 Usage:
-    python -m src.analysis.generate_results
-    python -m src.analysis.generate_results --demo  # Use calibrated demo values if raw traces are offline
+    python -m src.analysis.generate_results              # reuses results/processed/*.csv if newer than the .sca, else processes them
+    python -m src.analysis.generate_results --reprocess  # always re-extracts the KPIs from the .sca files
+    python -m src.analysis.generate_results --demo   # synthetic data only (no simulation results needed)
 """
 
 import argparse
 import json
-import os
-from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -24,7 +23,6 @@ from src.analysis.flow_levels import flow_per_lane, is_current_config, level_lab
 from src.analysis.level_style import (
     add_level_columns,
     annotate_los,
-    level_origin_handles,
     plot_level_series,
     safe_level_sort_key,
 )
@@ -34,7 +32,8 @@ from src.analysis.statistics import (
     paired_differences,
     summarize_differences,
 )
-from src.env import CONFIG_DIR, DEFAULT_EXTERNAL_DIR, RAW_DATA_DIR, RESULTS_DIR, ROOT_DIR
+from src.analysis.extract_kpis import extract_run_values
+from src.env import CONFIG_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, RESULTS_DIR
 from src.simulation.protocols import load_protocols
 
 # ==============================================================================
@@ -75,26 +74,40 @@ PROTOCOL_MARKERS = {
 }
 
 
-def resolve_data_paths():
-    """Detect whether data is on external SSD, local results dir, or needs demo generation."""
-    ssd_raw = DEFAULT_EXTERNAL_DIR / "results" / "rawData"
-    local_raw = ROOT_DIR / "results" / "rawData"
+PROCESSED_FILES = ("kpi_run_values.csv", "kpi_run_summary.csv", "paired_summary.csv", "equivalence_tests.csv")
 
-    search_dirs = []
-    if "SIM_DATA_DIR" in os.environ:
-        search_dirs.append(Path(os.environ["SIM_DATA_DIR"]) / "results" / "rawData")
-    if ssd_raw.is_dir():
-        search_dirs.append(ssd_raw)
-    search_dirs.append(local_raw)
 
-    for d in search_dirs:
-        if d.is_dir():
-            # Check for existing summary CSVs or scavetool export
-            if (d / "kpi_run_summary.csv").is_file() or (d / "scavetool_export.csv").is_file():
-                return d
+def processed_csvs_are_current(raw_dir, out_dir):
+    """True if every processed CSV exists and is newer than the newest .sca in raw_dir."""
+    csv_paths = [out_dir / name for name in PROCESSED_FILES]
+    if not all(path.is_file() for path in csv_paths):
+        return False
+    sca_mtimes = [path.stat().st_mtime for path in raw_dir.glob("*.sca")]
+    if not sca_mtimes:
+        return True  # nothing to reprocess from; reuse what exists
+    return min(path.stat().st_mtime for path in csv_paths) > max(sca_mtimes)
 
-    # Default fallback to local raw dir
-    return local_raw
+
+def load_processed_results(out_dir):
+    print(f"\n[PASSO 0/2] Reutilizando CSVs processados de: {out_dir} (use --reprocess para refazer)")
+    return tuple(pd.read_csv(out_dir / name) for name in PROCESSED_FILES)
+
+
+def process_simulation_results(raw_dir, out_dir):
+    """Stage 4 data processing: .sca files -> per-run KPIs -> summaries, paired differences and TOST.
+
+    Writes kpi_run_values.csv, kpi_run_summary.csv, paired_summary.csv and equivalence_tests.csv to out_dir
+    so the processed data can be inspected or reused outside this script.
+    """
+    print(f"\n[PASSO 0/2] Processando resultados das simulações em: {raw_dir}")
+    run_values = extract_run_values(raw_dir, 6)  # 6 workers for parallel processing
+    summary, paired_summary, equivalence = compute_summaries(run_values)
+
+    frames = (run_values, summary, paired_summary, equivalence)
+    for name, frame in zip(PROCESSED_FILES, frames):
+        frame.to_csv(out_dir / name, index=False)
+        print(f"  [OK] Gerado: {out_dir / name}")
+    return frames
 
 
 # ==============================================================================
@@ -280,7 +293,9 @@ def plot_fig1_crypto_breakdown(summary, out_dir):
     ax.set_xticks(x)
     ax.set_xticklabels([p.replace("_", "-") for p in PROTOCOLS], fontweight="bold")
     ax.grid(axis="y", linestyle="--", alpha=0.5)
-    ax.legend(loc="upper left")
+    # Legend floats inside the plot; the raised y-limit below reserves headroom so it
+    # never overlaps the overhead labels drawn above the bars
+    ax.legend(loc="upper left", fontsize=9, framealpha=0.95)
 
     # Add labels on bars
     for idx, (tx, rx) in enumerate(zip(tx_vals, rx_vals)):
@@ -289,12 +304,13 @@ def plot_fig1_crypto_breakdown(summary, out_dir):
         ax.text(idx, tx + rx / 2, f"{rx:.0f} µs", ha="center", va="center", color="white", fontsize=8, fontweight="bold")
         overhead_pct = ((tot / (tx_vals.iloc[0] + rx_vals.iloc[0])) - 1) * 100
         ov_text = "Ref. (0%)" if idx == 0 else f"+{overhead_pct:.1f}% ({tot:.0f} µs)"
-        ax.text(idx, tot + 20, ov_text, ha="center", va="bottom", fontsize=9, fontweight="bold")
+        ax.annotate(ov_text, (idx, tot), xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=9, fontweight="bold")
 
-    ax.set_ylim(0, max(tx_vals + rx_vals) * 1.18)
+    ax.set_ylim(0, max(tx_vals + rx_vals) * 1.35)
     fig.tight_layout()
     path = out_dir / "fig1_crypto_latency_breakdown.png"
-    fig.savefig(path)
+    fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  [OK] Gerado: {path.name}")
 
@@ -302,48 +318,125 @@ def plot_fig1_crypto_breakdown(summary, out_dir):
 # ==============================================================================
 # Figure 2: End-to-End Latency vs. Flow per Lane
 # ==============================================================================
-def plot_fig2_e2e_latency_vs_flow(summary, out_dir):
-    data = summary[summary["KPI"] == "Latency (ms)"].dropna(subset=[FLOW_X, "Mean"])
+def _padded_limits(low, high, pad=0.08, floor=None, ceil=None):
+    """Data-driven axis limits with a small relative padding, optionally clamped."""
+    span = high - low
+    if not np.isfinite(span) or span <= 0:
+        span = max(abs(high), 1.0) * 0.1
+    low, high = low - pad * span, high + pad * span
+    if floor is not None:
+        low = max(low, floor)
+    if ceil is not None:
+        high = min(high, ceil)
+    return low, high
+
+
+def plot_flow_with_deltas(summary, paired_summary, out_dir, *, kpi, ylabel, delta_ylabel, title, filename,
+                          threshold=None, always_show_threshold=False, margin=None, floor=None, ceil=None):
+    """Two-row flow figure: absolute KPI per protocol (top) and paired Δ vs. baseline with 95% CI (bottom).
+
+    The top row uses data-driven y-limits; the bottom row zooms on the differences, which are too small to
+    tell apart on the absolute scale. `threshold` is a (value, label) reference line drawn on the top row
+    when it lies near the data (or always, with `always_show_threshold`); `margin` is the TOST equivalence margin drawn on the bottom row.
+    """
+    data = summary[summary["KPI"] == kpi].dropna(subset=[FLOW_X, "Mean"])
     if data.empty:
         return
+    deltas = pd.DataFrame()
+    if paired_summary is not None and not paired_summary.empty:
+        deltas = paired_summary[paired_summary["KPI"] == kpi].copy()
+        deltas[FLOW_X] = [flow_per_lane(t, sc) for t, sc in zip(deltas["Topology"], deltas["Scenario"])]
+        deltas = deltas.dropna(subset=[FLOW_X, "MeanDiff"])
 
-    fig, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), sharey=True)
+    fig, axes = plt.subplots(2, len(TOPOLOGIES), figsize=(15, 6.8), sharey="row", sharex="col",
+                             gridspec_kw={"height_ratios": [2.2, 1.3], "hspace": 0.08})
+    top_axes, delta_axes = axes
+    candidates = [p for p in PROTOCOLS if p != BASELINE]
     legend_handles = {}
 
-    for ax, topology in zip(axes, TOPOLOGIES):
+    for col, topology in enumerate(TOPOLOGIES):
+        ax, dax = top_axes[col], delta_axes[col]
         t_data = data[data["Topology"] == topology]
         for protocol in PROTOCOLS:
             p_data = t_data[t_data["Protocol"] == protocol].sort_values(FLOW_X)
             if p_data.empty:
                 continue
-            color = PROTOCOL_COLORS[protocol]
-            marker = PROTOCOL_MARKERS[protocol]
-            plot_level_series(
-                ax, p_data[FLOW_X], p_data["Mean"], p_data["Scenario"],
-                color=color, yerr=p_data["CI95"], markersize=5
-            )
+            color, marker = PROTOCOL_COLORS[protocol], PROTOCOL_MARKERS[protocol]
+            plot_level_series(ax, p_data[FLOW_X], p_data["Mean"], p_data["Scenario"],
+                              color=color, marker=marker, yerr=p_data["CI95"], markersize=5)
             legend_handles[protocol] = Line2D([], [], color=color, marker=marker, label=protocol.replace("_", "-"))
 
         levels = t_data["Scenario"].drop_duplicates()
         annotate_los(ax, topology, [flow_per_lane(topology, f) for f in levels], levels)
         ax.set_title(f"Topologia: {topology.capitalize()}", pad=14, fontweight="bold")
-        ax.set_xlabel("Volume por Faixa (veh/h/faixa)")
         ax.grid(True, linestyle=":", alpha=0.6)
 
-        # Highlight active safety deadlines
-        ax.axhline(10.0, color="#d90429", linestyle="--", linewidth=1.2, alpha=0.7, label="Limite Platooning (10 ms)")
+        # Bottom row: paired Δ, slightly dodged on x so the three ciphers do not hide each other
+        t_delta = deltas[deltas["Topology"] == topology] if not deltas.empty else deltas
+        x_span = np.ptp(t_data[FLOW_X]) if len(t_data) else 0.0
+        dodge = 0.012 * (x_span if x_span > 0 else 1.0)
+        for idx, protocol in enumerate(candidates):
+            p_delta = t_delta[t_delta["Protocol"] == protocol].sort_values(FLOW_X) if not t_delta.empty else t_delta
+            if p_delta.empty:
+                continue
+            plot_level_series(dax, p_delta[FLOW_X] + (idx - 1) * dodge, p_delta["MeanDiff"], p_delta["Scenario"],
+                              color=PROTOCOL_COLORS[protocol], marker=PROTOCOL_MARKERS[protocol],
+                              yerr=p_delta["CI95"], markersize=4, linewidth=1.2)
+        dax.axhline(0, color=PROTOCOL_COLORS[BASELINE], linewidth=1.0, zorder=1)
+        dax.set_xlabel("Volume por Faixa (veh/h/faixa)")
+        dax.grid(True, linestyle=":", alpha=0.6)
 
-    axes[0].set_ylabel("Latência Fim a Fim $T_{E2E}$ (ms)")
-    axes[0].set_ylim(0, 3.5)
+    # Top row: tight limits around mean ± CI, extended to the reference line only when it is near the data
+    low = (data["Mean"] - data["CI95"]).min()
+    high = (data["Mean"] + data["CI95"]).max()
+    if threshold is not None and (always_show_threshold or threshold[0] <= high + 0.5 * (high - low)):
+        high = max(high, threshold[0])
+        for ax in top_axes:
+            ax.axhline(threshold[0], color="#d90429", linestyle="--", linewidth=1.2, alpha=0.75)
+        legend_handles["threshold"] = Line2D([], [], color="#d90429", linestyle="--", label=threshold[1])
+    top_axes[0].set_ylim(*_padded_limits(low, high, floor=floor, ceil=ceil))
+    top_axes[0].set_ylabel(ylabel)
 
-    handles = list(legend_handles.values()) + level_origin_handles()
-    fig.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.98), fontsize=9)
-    fig.suptitle("Latência Fim a Fim vs. Volume de Tráfego por Topologia (Média e IC 95%)", y=1.04, fontweight="bold")
-    fig.tight_layout()
-    path = out_dir / "fig2_e2e_latency_vs_flow.png"
+    # Bottom row: limits sized by Δ ± CI, always including zero (one-sided when every Δ has the same sign)
+    if not deltas.empty:
+        ci = deltas["CI95"].fillna(0)
+        low = min(0.0, (deltas["MeanDiff"] - ci).min())
+        high = max(0.0, (deltas["MeanDiff"] + ci).max())
+        if margin is not None:
+            extent = max(abs(low), abs(high))
+            if margin <= extent * 1.6:
+                low, high = min(low, -margin if low < 0 else low), max(high, margin if high > 0 else high)
+                for dax in delta_axes:
+                    dax.axhspan(-margin, margin, color="#999999", alpha=0.12, zorder=0)
+                legend_handles["margin"] = plt.Rectangle((0, 0), 1, 1, color="#999999", alpha=0.25,
+                                                         label=f"Margem de equivalência TOST (±{margin:g})")
+            else:
+                delta_axes[-1].text(0.98, 0.04, f"Margem TOST ±{margin:g} fora da escala",
+                                    transform=delta_axes[-1].transAxes, ha="right", va="bottom",
+                                    fontsize=8, color="#555555")
+        delta_axes[0].set_ylim(*_padded_limits(low, high, pad=0.15))
+    delta_axes[0].set_ylabel(delta_ylabel)
+
+    handles = list(legend_handles.values())
+    fig.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.97), fontsize=9)
+    fig.suptitle(title, y=1.01, fontweight="bold")
+    path = out_dir / filename
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"  [OK] Gerado: {path.name}")
+
+
+def plot_fig2_e2e_latency_vs_flow(summary, paired_summary, out_dir):
+    plot_flow_with_deltas(
+        summary, paired_summary, out_dir,
+        kpi="Latency (ms)",
+        ylabel="Latência Fim a Fim $T_{E2E}$ (ms)",
+        delta_ylabel=r"$\Delta$ vs. baseline (ms)",
+        title=r"Latência Fim a Fim vs. Volume de Tráfego por Topologia (Média, $\Delta$ Pareado e IC 95%)",
+        filename="fig2_e2e_latency_vs_flow.png",
+        threshold=(10.0, "Limite Platooning (10 ms)"),
+        floor=0.0,
+    )
 
 
 # ==============================================================================
@@ -383,45 +476,17 @@ def plot_fig3_latency_boxplots(run_values, out_dir):
 # ==============================================================================
 # Figure 4: Packet Delivery Ratio (PDR) vs. Flow per Lane
 # ==============================================================================
-def plot_fig4_pdr_vs_flow(summary, out_dir):
-    data = summary[summary["KPI"] == "PDR (%)"].dropna(subset=[FLOW_X, "Mean"])
-    if data.empty:
-        return
-
-    fig, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), sharey=True)
-    legend_handles = {}
-
-    for ax, topology in zip(axes, TOPOLOGIES):
-        t_data = data[data["Topology"] == topology]
-        for protocol in PROTOCOLS:
-            p_data = t_data[t_data["Protocol"] == protocol].sort_values(FLOW_X)
-            if p_data.empty:
-                continue
-            color = PROTOCOL_COLORS[protocol]
-            marker = PROTOCOL_MARKERS[protocol]
-            plot_level_series(
-                ax, p_data[FLOW_X], p_data["Mean"], p_data["Scenario"],
-                color=color, yerr=p_data["CI95"], markersize=5
-            )
-            legend_handles[protocol] = Line2D([], [], color=color, marker=marker, label=protocol.replace("_", "-"))
-
-        levels = t_data["Scenario"].drop_duplicates()
-        annotate_los(ax, topology, [flow_per_lane(topology, f) for f in levels], levels)
-        ax.set_title(f"Topologia: {topology.capitalize()}", pad=14, fontweight="bold")
-        ax.set_xlabel("Volume por Faixa (veh/h/faixa)")
-        ax.grid(True, linestyle=":", alpha=0.6)
-
-    axes[0].set_ylabel("Taxa de Entrega de Pacotes - PDR (%)")
-    axes[0].set_ylim(70, 102)
-
-    handles = list(legend_handles.values()) + level_origin_handles()
-    fig.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.98), fontsize=9)
-    fig.suptitle("Taxa de Entrega de Pacotes (PDR) vs. Volume de Tráfego por Topologia", y=1.04, fontweight="bold")
-    fig.tight_layout()
-    path = out_dir / "fig4_pdr_vs_flow.png"
-    fig.savefig(path, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  [OK] Gerado: {path.name}")
+def plot_fig4_pdr_vs_flow(summary, paired_summary, out_dir):
+    plot_flow_with_deltas(
+        summary, paired_summary, out_dir,
+        kpi="PDR (%)",
+        ylabel="Taxa de Entrega de Pacotes - PDR (%)",
+        delta_ylabel=r"$\Delta$ vs. baseline (p.p.)",
+        title="Taxa de Entrega de Pacotes (PDR) vs. Volume de Tráfego por Topologia",
+        filename="fig4_pdr_vs_flow.png",
+        margin=load_margins().get("PDR (%)"),
+        ceil=100.5,
+    )
 
 
 # ==============================================================================
@@ -473,53 +538,46 @@ def plot_fig5_pdr_distance_decay(summary, out_dir):
 # ==============================================================================
 # Figure 6: Channel Busy Ratio (CBR) vs. Flow
 # ==============================================================================
-def plot_fig6_cbr_vs_flow(summary, out_dir):
-    data = summary[summary["KPI"] == "Channel Busy Rate (%)"].dropna(subset=[FLOW_X, "Mean"])
-    if data.empty:
-        return
-
-    fig, axes = plt.subplots(1, len(TOPOLOGIES), figsize=(15, 4.5), sharey=True)
-    legend_handles = {}
-
-    for ax, topology in zip(axes, TOPOLOGIES):
-        t_data = data[data["Topology"] == topology]
-        for protocol in PROTOCOLS:
-            p_data = t_data[t_data["Protocol"] == protocol].sort_values(FLOW_X)
-            if p_data.empty:
-                continue
-            color = PROTOCOL_COLORS[protocol]
-            marker = PROTOCOL_MARKERS[protocol]
-            plot_level_series(
-                ax, p_data[FLOW_X], p_data["Mean"], p_data["Scenario"],
-                color=color, yerr=p_data["CI95"], markersize=5
-            )
-            legend_handles[protocol] = Line2D([], [], color=color, marker=marker, label=protocol.replace("_", "-"))
-
-        levels = t_data["Scenario"].drop_duplicates()
-        annotate_los(ax, topology, [flow_per_lane(topology, f) for f in levels], levels)
-        ax.set_title(f"Topologia: {topology.capitalize()}", pad=14, fontweight="bold")
-        ax.set_xlabel("Volume por Faixa (veh/h/faixa)")
-        ax.grid(True, linestyle=":", alpha=0.6)
-
-        # Highlight 30% DCC Congestion threshold
-        ax.axhline(30.0, color="#d90429", linestyle="--", linewidth=1.5, alpha=0.8, label="Limite DCC (30% CBR)")
-
-    axes[0].set_ylabel("Ocupação do Canal - CBR (%)")
-    axes[0].set_ylim(0, 35)
-
-    handles = list(legend_handles.values()) + level_origin_handles()
-    fig.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.98), fontsize=9)
-    fig.suptitle("Taxa de Ocupação do Canal de Rádio (CBR) vs. Volume de Tráfego", y=1.04, fontweight="bold")
-    fig.tight_layout()
-    path = out_dir / "fig6_cbr_vs_flow.png"
-    fig.savefig(path, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  [OK] Gerado: {path.name}")
+def plot_fig6_cbr_vs_flow(summary, paired_summary, out_dir):
+    margins = load_margins()
+    plot_flow_with_deltas(
+        summary, paired_summary, out_dir,
+        kpi="Channel Busy Rate (%)",
+        ylabel="Ocupação do Canal - CBR (%)",
+        delta_ylabel=r"$\Delta$ vs. baseline (p.p.)",
+        title="Taxa de Ocupação do Canal de Rádio (CBR) vs. Volume de Tráfego",
+        filename="fig6_cbr_vs_flow.png",
+        threshold=(30.0, "Início do DCC (CBR 30%)"),
+        always_show_threshold=True,
+        margin=margins.get("Channel Busy Rate (%)", margins.get("CBR (%)")),
+        floor=0.0,
+    )
 
 
 # ==============================================================================
 # Figure 7: Paired Differences (Deltas vs. Baseline)
 # ==============================================================================
+def pooled_mean_ci(levels):
+    """Mean of the per-level paired Δ and its 95% CI, from paired_summary rows (one per demand level).
+
+    Levels are independent simulations, so Var(mean) = Σ(SD_i²/N_i)/k²; the degrees of freedom follow
+    Welch–Satterthwaite. Averaging the per-level CI95 instead would report the width of a single level's
+    interval, not the uncertainty of the pooled mean.
+    """
+    levels = levels.dropna(subset=["MeanDiff"])
+    if levels.empty:
+        return np.nan, np.nan
+    k = len(levels)
+    variances = (levels["SD"] ** 2 / levels["N"]).to_numpy(dtype=float)
+    mean = levels["MeanDiff"].mean()
+    if not np.all(np.isfinite(variances)) or variances.sum() == 0:
+        return mean, 0.0
+    standard_error = np.sqrt(variances.sum()) / k
+    dof_terms = variances ** 2 / (levels["N"].to_numpy(dtype=float) - 1)
+    dof = variances.sum() ** 2 / dof_terms.sum()
+    return mean, stats.t.ppf(0.975, dof) * standard_error
+
+
 def plot_fig7_paired_deltas(paired_summary, out_dir):
     if paired_summary.empty:
         return
@@ -543,9 +601,9 @@ def plot_fig7_paired_deltas(paired_summary, out_dir):
             t_data = k_data[k_data["Topology"] == topology]
             means, errs = [], []
             for proto in proto_candidates:
-                sub = t_data[t_data["Protocol"] == proto]
-                means.append(sub["MeanDiff"].mean() if not sub.empty else 0)
-                errs.append(sub["CI95"].mean() if not sub.empty else 0)
+                mean, ci = pooled_mean_ci(t_data[t_data["Protocol"] == proto])
+                means.append(mean)
+                errs.append(ci)
 
             ax.bar(
                 x + (t_idx - 1) * width, means, width, yerr=errs, capsize=3,
@@ -559,7 +617,7 @@ def plot_fig7_paired_deltas(paired_summary, out_dir):
         ax.grid(axis="y", linestyle=":", alpha=0.6)
 
     axes[0].legend(loc="upper left")
-    fig.suptitle(r"Diferenças Pareadas em Relação ao Baseline ($\Delta = \mathrm{Protocolo} - \mathrm{Baseline}$ com IC 95%)", y=0.98, fontweight="bold")
+    fig.suptitle(r"Diferenças Pareadas em Relação ao Baseline ($\Delta = \mathrm{Protocolo} - \mathrm{Baseline}$, média dos níveis de demanda e IC 95%)", y=0.98, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     path = out_dir / "fig7_paired_deltas_vs_baseline.png"
     fig.savefig(path)
@@ -592,7 +650,7 @@ def plot_fig8_executive_heatmap(summary, paired_summary, out_dir):
         ("Ocupação do Canal - CBR (%)", get_matrix("Channel Busy Rate (%)", summary), "YlOrRd", "{:.1f}%"),
         (r"$\Delta$ Processamento vs Baseline (ms)", get_paired_matrix("Processing latency (ms)"), "RdPu", "+{:.3f}"),
         (r"$\Delta$ Latência Fim a Fim (ms)", get_paired_matrix("Latency (ms)"), "RdPu", "+{:.3f}"),
-        (r"$\Delta$ PDR vs Baseline (p.p.)", get_paired_matrix("PDR (%)"), "coolwarm", "{:+.2f}"),
+        (r"$\Delta$ PDR vs Baseline (p.p.)", get_paired_matrix("PDR (%)"), "coolwarm", "{:+.3f}"),
     ]
 
     for ax, (title, df_mat, cmap, fmt) in zip(axes, panels):
@@ -600,7 +658,13 @@ def plot_fig8_executive_heatmap(summary, paired_summary, out_dir):
             ax.set_visible(False)
             continue
         cols = [c.replace("_", "-") for c in df_mat.columns]
-        im = ax.imshow(df_mat.values, cmap=cmap, aspect="auto")
+        # Diverging maps must be centred on zero so the neutral colour means "no change".
+        limits = {}
+        if cmap == "coolwarm":
+            lim = np.nanmax(np.abs(df_mat.values.astype(float)))
+            if lim > 0:
+                limits = {"vmin": -lim, "vmax": lim}
+        im = ax.imshow(df_mat.values, cmap=cmap, aspect="auto", **limits)
         ax.set_xticks(range(len(cols)))
         ax.set_xticklabels(cols, rotation=20, ha="right", fontsize=9)
         ax.set_yticks(range(len(TOPOLOGIES)))
@@ -611,7 +675,10 @@ def plot_fig8_executive_heatmap(summary, paired_summary, out_dir):
             for j in range(df_mat.shape[1]):
                 val = df_mat.values[i, j]
                 if np.isfinite(val):
-                    ax.text(j, i, fmt.format(val), ha="center", va="center", color="black" if val < df_mat.values.max()*0.75 else "white", fontsize=9, fontweight="bold")
+                    r, g, b, _ = im.cmap(im.norm(val))
+                    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+                    text_color = "black" if luminance > 0.5 else "white"
+                    ax.text(j, i, fmt.format(val), ha="center", va="center", color=text_color, fontsize=9, fontweight="bold")
 
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
@@ -842,7 +909,7 @@ def main():
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Força uso dos dados da matriz experimental calibrada (útil offline sem SSD)",
+        help="Usa dados SINTÉTICOS (gerados a partir da matriz calibrada) em vez dos .sca das simulações",
     )
     parser.add_argument(
         "--tables-only",
@@ -853,6 +920,11 @@ def main():
         "--plots-only",
         action="store_true",
         help="Gera apenas os gráficos .png",
+    )
+    parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Reextrai os KPIs dos .sca mesmo se os CSVs em results/processed/ estiverem atualizados",
     )
     args = parser.parse_args()
 
@@ -867,35 +939,29 @@ def main():
     print(f" Diretório de Tabelas (.csv, .md, .tex): {tables_dir}")
     print("=" * 70)
 
-    # 1. Carregamento dos Dados
-    raw_dir = resolve_data_paths()
-    run_values_csv = raw_dir / "kpi_run_values.csv"
-    summary_csv = raw_dir / "kpi_run_summary.csv"
-    paired_summary_csv = raw_dir / "paired_summary.csv"
-    equiv_csv = raw_dir / "equivalence_tests.csv"
-
-    if args.demo or not (summary_csv.is_file() and paired_summary_csv.is_file()):
-        if not args.demo:
-            print(f"[INFO] Dados pré-computados não encontrados em {raw_dir}.")
+    # 1. Dados: simulações reais (.sca) por padrão; dados sintéticos apenas com --demo.
+    if args.demo:
+        print("[AVISO] Modo --demo: usando dados SINTÉTICOS, não os resultados das simulações.")
         run_values = generate_demo_dataset()
         summary, paired_summary, equivalence = compute_summaries(run_values)
+    elif not args.reprocess and processed_csvs_are_current(RAW_DATA_DIR, PROCESSED_DATA_DIR):
+        run_values, summary, paired_summary, equivalence = load_processed_results(PROCESSED_DATA_DIR)
     else:
-        print(f"[INFO] Carregando métricas pré-computadas de: {raw_dir}")
-        summary = pd.read_csv(summary_csv)
-        paired_summary = pd.read_csv(paired_summary_csv)
-        equivalence = pd.read_csv(equiv_csv) if equiv_csv.is_file() else pd.DataFrame()
-        run_values = pd.read_csv(run_values_csv) if run_values_csv.is_file() else pd.DataFrame()
+        try:
+            run_values, summary, paired_summary, equivalence = process_simulation_results(RAW_DATA_DIR, PROCESSED_DATA_DIR)
+        except (FileNotFoundError, ValueError) as error:
+            raise SystemExit(f"[ERRO] {error}\n        Use --demo para gerar os artefatos com dados sintéticos.")
 
     # 2. Geração dos Gráficos Relevantes (.png 300 DPI)
     if not args.tables_only:
         print("\n[PASSO 1/2] Gerando figuras científicas essenciais (.png 300 DPI)...")
         plot_fig1_crypto_breakdown(summary, plots_dir)
-        plot_fig2_e2e_latency_vs_flow(summary, plots_dir)
+        plot_fig2_e2e_latency_vs_flow(summary, paired_summary, plots_dir)
         if not run_values.empty:
             plot_fig3_latency_boxplots(run_values, plots_dir)
-        plot_fig4_pdr_vs_flow(summary, plots_dir)
+        plot_fig4_pdr_vs_flow(summary, paired_summary, plots_dir)
         plot_fig5_pdr_distance_decay(summary, plots_dir)
-        plot_fig6_cbr_vs_flow(summary, plots_dir)
+        plot_fig6_cbr_vs_flow(summary, paired_summary, plots_dir)
         plot_fig7_paired_deltas(paired_summary, plots_dir)
         plot_fig8_executive_heatmap(summary, paired_summary, plots_dir)
 

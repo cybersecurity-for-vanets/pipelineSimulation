@@ -55,4 +55,4 @@ bash sim/crypto_benchmark/run_benchmark.sh
   - `src/simulation/`: Configuration generator and parallel orchestrator CLI.
   - `src/analysis/`: Scavetool metric extraction, paired differences, TOST equivalence tests, and plotting.
 - `docs/`: Technical reports, mathematical metric definitions, and plotting guidelines in English.
-- `results/`: Output data (`results/rawData/` and `results/plots/`).
+- `results/`: Output data — `rawData/` (OMNeT++ `.sca`/`.vec`), `processed/` (Stage 4 KPI CSVs extracted from `.sca`), `plots/` and `tables/`.
