@@ -70,3 +70,4 @@ Thumbs.db
 # --- External / Research Papers & Large Datasets ---
 docs/*.pdf
 docs/msvp_*/
+CLAUDE.md

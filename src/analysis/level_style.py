@@ -102,7 +102,10 @@ def plot_level_series(axis, x, y, levels, *, color, marker="o", linestyle="-", y
     order = np.argsort(x[keep], kind="stable")
     x, y = x[keep][order], y[keep][order]
     if err is not None:
-        err = np.nan_to_num(err[keep][order])
+        if err.ndim == 2:
+            err = np.nan_to_num(err[:, keep][:, order])
+        else:
+            err = np.nan_to_num(err[keep][order])
     if x.size == 0:
         return
 

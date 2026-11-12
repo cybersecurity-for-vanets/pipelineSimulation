@@ -234,7 +234,14 @@ def compute_summaries(run_values):
     summary = run_values.groupby(
         ["Topology", "Protocol", "Scenario", "KPI"], as_index=False
     )["Value"].agg(Mean="mean", Std="std", N="count")
-    summary["CI95"] = 1.96 * summary["Std"].fillna(0) / np.sqrt(summary["N"])
+    # Exact 95% confidence interval via Student's t-distribution for small samples (N < 30)
+    dof = np.maximum(summary["N"] - 1, 1)
+    t_critical = stats.t.ppf(0.975, dof)
+    summary["CI95"] = np.where(
+        summary["N"] > 1,
+        t_critical * summary["Std"].fillna(0) / np.sqrt(summary["N"]),
+        0.0,
+    )
 
     flows = {}
     for key in summary[["Topology", "Scenario"]].drop_duplicates().itertuples(index=False):
@@ -332,13 +339,19 @@ def _padded_limits(low, high, pad=0.08, floor=None, ceil=None):
 
 
 def plot_flow_with_deltas(summary, paired_summary, out_dir, *, kpi, ylabel, delta_ylabel, title, filename,
-                          threshold=None, always_show_threshold=False, margin=None, floor=None, ceil=None):
+                          threshold=None, always_show_threshold=False, margin=None, floor=None, ceil=None,
+                          error_floor=None, error_ceil=None):
     """Two-row flow figure: absolute KPI per protocol (top) and paired Δ vs. baseline with 95% CI (bottom).
 
     The top row uses data-driven y-limits; the bottom row zooms on the differences, which are too small to
     tell apart on the absolute scale. `threshold` is a (value, label) reference line drawn on the top row
     when it lies near the data (or always, with `always_show_threshold`); `margin` is the TOST equivalence margin drawn on the bottom row.
     """
+    if error_floor is None:
+        error_floor = floor
+    if error_ceil is None:
+        error_ceil = ceil
+
     data = summary[summary["KPI"] == kpi].dropna(subset=[FLOW_X, "Mean"])
     if data.empty:
         return
@@ -357,13 +370,32 @@ def plot_flow_with_deltas(summary, paired_summary, out_dir, *, kpi, ylabel, delt
     for col, topology in enumerate(TOPOLOGIES):
         ax, dax = top_axes[col], delta_axes[col]
         t_data = data[data["Topology"] == topology]
-        for protocol in PROTOCOLS:
+        x_span = np.ptp(t_data[FLOW_X]) if len(t_data) else 0.0
+        dodge = 0.012 * (x_span if x_span > 0 else 1.0)
+
+        # Top row: absolute KPI per protocol, dodged on x to prevent overlapping error bars
+        for idx, protocol in enumerate(PROTOCOLS):
             p_data = t_data[t_data["Protocol"] == protocol].sort_values(FLOW_X)
             if p_data.empty:
                 continue
             color, marker = PROTOCOL_COLORS[protocol], PROTOCOL_MARKERS[protocol]
-            plot_level_series(ax, p_data[FLOW_X], p_data["Mean"], p_data["Scenario"],
-                              color=color, marker=marker, yerr=p_data["CI95"], markersize=5)
+            x_vals = p_data[FLOW_X] + (idx - 1.5) * dodge
+            y_vals = p_data["Mean"].to_numpy(dtype=float)
+            ci_vals = p_data["CI95"].fillna(0).to_numpy(dtype=float)
+
+            if error_floor is not None or error_ceil is not None:
+                low_err = ci_vals.copy()
+                high_err = ci_vals.copy()
+                if error_floor is not None:
+                    low_err = np.minimum(low_err, np.maximum(y_vals - error_floor, 0.0))
+                if error_ceil is not None:
+                    high_err = np.minimum(high_err, np.maximum(error_ceil - y_vals, 0.0))
+                yerr = np.array([low_err, high_err])
+            else:
+                yerr = ci_vals
+
+            plot_level_series(ax, x_vals, p_data["Mean"], p_data["Scenario"],
+                              color=color, marker=marker, yerr=yerr, markersize=5)
             legend_handles[protocol] = Line2D([], [], color=color, marker=marker, label=protocol.replace("_", "-"))
 
         levels = t_data["Scenario"].drop_duplicates()
@@ -373,8 +405,6 @@ def plot_flow_with_deltas(summary, paired_summary, out_dir, *, kpi, ylabel, delt
 
         # Bottom row: paired Δ, slightly dodged on x so the three ciphers do not hide each other
         t_delta = deltas[deltas["Topology"] == topology] if not deltas.empty else deltas
-        x_span = np.ptp(t_data[FLOW_X]) if len(t_data) else 0.0
-        dodge = 0.012 * (x_span if x_span > 0 else 1.0)
         for idx, protocol in enumerate(candidates):
             p_delta = t_delta[t_delta["Protocol"] == protocol].sort_values(FLOW_X) if not t_delta.empty else t_delta
             if p_delta.empty:
@@ -485,7 +515,10 @@ def plot_fig4_pdr_vs_flow(summary, paired_summary, out_dir):
         title="Taxa de Entrega de Pacotes (PDR) vs. Volume de Tráfego por Topologia",
         filename="fig4_pdr_vs_flow.png",
         margin=load_margins().get("PDR (%)"),
+        floor=0.0,
         ceil=100.5,
+        error_floor=0.0,
+        error_ceil=100.0,
     )
 
 
@@ -510,12 +543,15 @@ def plot_fig5_pdr_distance_decay(summary, out_dir):
 
     for idx, proto in enumerate(PROTOCOLS):
         proto_data = peak_data[peak_data["Protocol"] == proto].set_index("KPI")
-        means = [proto_data.loc[k, "Mean"] if k in proto_data.index else np.nan for k in dist_kpis]
-        errs = [proto_data.loc[k, "CI95"] if k in proto_data.index else 0 for k in dist_kpis]
+        means = np.array([proto_data.loc[k, "Mean"] if k in proto_data.index else np.nan for k in dist_kpis], dtype=float)
+        errs = np.array([proto_data.loc[k, "CI95"] if k in proto_data.index else 0.0 for k in dist_kpis], dtype=float)
+        low_errs = np.minimum(errs, np.maximum(means - 0.0, 0.0))
+        high_errs = np.minimum(errs, np.maximum(100.0 - means, 0.0))
+        yerr = np.array([low_errs, high_errs])
 
         ax.bar(
             x + (idx - 1.5) * width, means, width,
-            yerr=errs, capsize=3, label=proto.replace("_", "-"),
+            yerr=yerr, capsize=3, label=proto.replace("_", "-"),
             color=PROTOCOL_COLORS[proto], edgecolor="black", alpha=0.85
         )
 
@@ -743,6 +779,38 @@ def save_table_formats(df, base_path, caption, label):
         f.write("\\end{table}\n")
 
 
+def pooled_mean_ci_from_summary(sub_kpi):
+    """Mean across demand levels and 95% CI using Welch–Satterthwaite degrees of freedom.
+
+    Levels are independent simulation regimes within a topology, so Var(mean) = Σ(Std_i² / N_i) / k².
+    Degrees of freedom follow Welch–Satterthwaite.
+    """
+    rows = sub_kpi.dropna(subset=["Mean"])
+    if rows.empty:
+        return np.nan, np.nan
+    k = len(rows)
+    mean = rows["Mean"].mean()
+    if "Std" not in rows.columns or "N" not in rows.columns:
+        return mean, 0.0
+    stds = rows["Std"].fillna(0).to_numpy(dtype=float)
+    ns = rows["N"].to_numpy(dtype=float)
+    valid = (ns > 1) & (stds > 0)
+    if not np.any(valid):
+        return mean, 0.0
+    variances = np.zeros(k, dtype=float)
+    variances[valid] = (stds[valid] ** 2) / ns[valid]
+    var_sum = variances.sum()
+    if var_sum == 0 or not np.isfinite(var_sum):
+        return mean, 0.0
+    standard_error = np.sqrt(var_sum) / k
+    dof_terms = np.zeros(k, dtype=float)
+    dof_terms[valid] = (variances[valid] ** 2) / (ns[valid] - 1)
+    dof_denom = dof_terms.sum()
+    dof = (var_sum ** 2) / dof_denom if dof_denom > 0 else 1.0
+    ci = stats.t.ppf(0.975, max(dof, 1.0)) * standard_error
+    return mean, ci
+
+
 def generate_tables(summary, paired_summary, equivalence, tables_dir):
     """Generates 4 publication tables for the Results and Discussion chapter."""
     print("[INFO] Gerando tabelas comparativas formatadas (.csv, .md, .tex)...")
@@ -756,8 +824,9 @@ def generate_tables(summary, paired_summary, equivalence, tables_dir):
                 row = sub[sub["KPI"] == kpi_name]
                 if row.empty:
                     return "-"
-                m = row["Mean"].mean()
-                ci = row["CI95"].mean()
+                m, ci = pooled_mean_ci_from_summary(row)
+                if np.isnan(m):
+                    return "-"
                 return f"{m:.2f} $\\pm$ {ci:.2f}"
 
             t1_rows.append({
@@ -818,7 +887,9 @@ def generate_tables(summary, paired_summary, equivalence, tables_dir):
         for (kpi, proto), group in equivalence.groupby(["KPI", "Protocol"]):
             margin = group["Margin"].iloc[0]
             mean_diff = group["MeanDiff"].mean()
-            ci = 1.96 * group["MeanDiff"].std() / np.sqrt(len(group)) if len(group) > 1 else 0.0
+            k = len(group)
+            t_crit = stats.t.ppf(0.975, k - 1) if k > 1 else 0.0
+            ci = t_crit * group["MeanDiff"].std() / np.sqrt(k) if k > 1 else 0.0
             p_holm = group["P_Holm"].max()
             equiv_pass = (group["Equivalent"] == 1).all()
 
